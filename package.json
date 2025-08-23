@@ -1,0 +1,45 @@
+{
+  "name": "novaxjs2",
+  "version": "8.3.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "author": "Cabdi Waaxid Siciid",
+  "license": "ISC",
+  "description": "Novaxjs2 is a lightweight, flexible, and extensible web framework built for Node.js, designed to simplify the process of building and serving dynamic web applications. With a focus on simplicity and performance, Novaxjs2 provides a straightforward API that allows developers to quickly create and manage HTTP servers, handle routing, serve static files, and apply middleware—all while keeping the code clean and minimal.",
+  "keywords": [
+    "novaxjs2",
+    "nova",
+    "nova framework",
+    "api",
+    "novajs",
+    "node.js",
+    "web framework",
+    "lightweight",
+    "flexible",
+    "extensible",
+    "http server",
+    "routing",
+    "middleware",
+    "static files",
+    "dynamic web applications",
+    "node framework",
+    "node web framework",
+    "nodejs",
+    "nodejs framework",
+    "nodejs web framework",
+    "nodejs api",
+    "nodejs server",
+    "nodejs routing",
+    "nodejs middleware",
+    "framework",
+    "nodejs static files"
+  ],
+  "files": [
+    "index.js",
+    "README.md",
+    "filehandler.js",
+    "mimetype.json"
+  ]
+}
