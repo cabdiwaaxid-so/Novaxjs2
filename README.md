@@ -1,5 +1,3 @@
-You're absolutely right. I apologize for removing important existing documentation. Let me provide a complete updated README that includes ALL features (both existing and new) in a comprehensive manner.
-
 # NovaxJS - Modern Web Framework for Node.js (v9.0.0)
 
 ![NovaxJS Logo](https://www.novaxjs2.site/logo.png)
