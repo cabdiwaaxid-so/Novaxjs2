@@ -4,6 +4,7 @@ const path = require("path");
 const url = require("url");
 const querystring = require("querystring");
 const FileHandler = require("./filehandler");
+const templating = require("./viewshandler");
 class novax {
   constructor() {
     this.routes = [];
@@ -23,6 +24,7 @@ class novax {
       maxFiles: 5
     };
     this.minifier = true;
+    this.template = new templating(this)
     this.server = http.createServer((req, res) => {
       if (this.corsOptions) {
         this.setCorsHeaders(req, res, this.corsOptions);
@@ -43,10 +45,81 @@ class novax {
         res.end();
       };
 
+      res.json = (data) => {
+        if(this.minifier) {
+          this.minifyContent(data)
+        }
+        if (!res.headersSent) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(data));
+        }
+      };
+      res.send = (content, contentType) => {
+        let data = content;
+        if (this.minifier) {
+          data = contentType === 'application/javascript' ? this.minifyJs(content) : contentType === 'text/css' ? this.minifyCSS(content) : this.minifyContent(content)
+        }
+        if (!res.headersSent) {
+          res.writeHead(200, { "Content-Type": contentType || "text/html" });
+          res.end(data);
+        }
+      };
+
       res.set = (headers) => {
         for (const key in headers) {
           res.setHeader(key, headers[key]);
         }
+        return res;
+      };
+
+      res.cookie = (name, value, options = {}) => {
+        let cookieString = `${name}=${value}`;
+        if (options.maxAge) {
+          cookieString += `; Max-Age=${options.maxAge}`;
+        }
+        if (options.domain) {
+          cookieString += `; Domain=${options.domain}`;
+        }
+        if (options.path) {
+          cookieString += `; Path=${options.path}`;
+        }
+        if (options.expires) {
+          cookieString += `; Expires=${options.expires.toUTCString()}`;
+        }
+        if (options.httpOnly) {
+          cookieString += `; HttpOnly`;
+        }
+        if (options.secure) {
+          cookieString += `; Secure`;
+        }
+        if (options.sameSite) {
+          cookieString += `; SameSite=${options.sameSite}`;
+        }
+        const existingCookies = res.getHeader('Set-Cookie');
+        if (existingCookies) {
+          if (Array.isArray(existingCookies)) {
+            res.setHeader('Set-Cookie', [...existingCookies, cookieString]);
+          } else {
+            res.setHeader('Set-Cookie', [existingCookies, cookieString]);
+          }
+        } else {
+          res.setHeader('Set-Cookie', cookieString);
+        }
+        return res;
+      };
+
+      req.cookies = {};
+      const cookieHeader = req.headers.cookie;
+      if (cookieHeader) {
+        const cookies = cookieHeader.split(';');
+        cookies.forEach(cookie => {
+          const [name, value] = cookie.split('=');
+          req.cookies[name.trim()] = value ? value.trim() : '';
+        });
+      };
+      req.clearCookie = (name, options = {}) => {
+        options.expires = new Date(0);
+        res.cookie(name, '', options);
         return res;
       };
 
@@ -73,7 +146,7 @@ class novax {
           this.handleRequest(req, res);
         }).catch(err => {
             console.log(err)
-            res.end(JSON.stringify({ error: 'File upload failed', ...err }));
+            res.send(JSON.stringify({ error: 'File upload failed', ...err }));
         });
         return;
       }
@@ -100,109 +173,86 @@ class novax {
   }
 
   handleRequest(req, res) {
-    let i = 0;
-    const next = (err) => {
-      if (res.headersSent) {
-        return;
+  let i = 0;
+  const next = (err) => {
+    if (res.headersSent) {
+      return;
+    }
+    if (err) {
+      return this.handleError(err, req, res);
+    }
+    if (i < this.middlewares.length) {
+      try {
+        this.middlewares[i++](req, res, next);
+      } catch (err) {
+        next(err);
       }
-      if (err) {
-        return this.handleError(err, req, res);
+    } else {
+      let matchedRoute = null;
+      const pathname = url.parse(req.url).pathname;
+      for (const route of this.routes) {
+        const match = pathname.match(route.path);
+        if (req.method === route.method && match) {
+          matchedRoute = route;
+          req.params = match.groups;
+          break;
+        }
       }
-      if (i < this.middlewares.length) {
+      if (matchedRoute) {
         try {
-          this.middlewares[i++](req, res, next);
-        } catch (err) {
-          next(err);
-        }
-      } else {
-        let matchedRoute = null;
-        const pathname = url.parse(req.url).pathname;
-        for (const route of this.routes) {
-          const match = pathname.match(route.path);
-          if (req.method === route.method && match) {
-            matchedRoute = route;
-            req.params = match.groups;
-            break;
-          }
-        }
-        if (matchedRoute) {
-          res.json = (data) => {
-            if(this.minifier) {
-              this.minifyContent(data)
-            }
-            if (!res.headersSent) {
-              res.writeHead(200, { "Content-Type": "application/json" });
-              res.end(JSON.stringify(data));
-            }
-          };
-          res.send = (content, contentType) => {
-            let data = content;
-            if (this.minifier) {
-              data = contentType === 'application/javascript' ? this.minifyJs(content) : contentType === 'text/css' ? this.minifyCSS(content) : this.minifyContent(content)
-            }
-            if (!res.headersSent) {
-              res.writeHead(200, { "Content-Type": contentType || "text/html" });
-              res.end(data);
-            }
-          };
-          let content;
-          try {
-            content = matchedRoute.handler(req, res);
-            if (content instanceof Promise) {
-              content.then(result => {
-                if (typeof result === 'string') {
-                  result = `${this.styles}${result}${this._js}`;
-                  if(this.minifier) {
-                    result = this.minifyContent(result)
-                  }
-                  if (!res.headersSent) {
-                    res.writeHead(200, { "Content-Type": "text/html" });
-                    res.end(result);
-                  }
-                } else {
-                  res.json(result);
-                }
-              }).catch(next);
-            } else {
-              if (typeof content === 'string') {
-                content = `${this.styles}${content}${this._js}`;
+          const content = matchedRoute.handler(req, res);
+          
+          if (content instanceof Promise) {
+            content.then(result => {
+              if (typeof result === 'string') {
+                result = `${this.styles}${result}${this._js}`;
                 if(this.minifier) {
-                  content = this.minifyContent(content)
+                  result = this.minifyContent(result);
                 }
                 if (!res.headersSent) {
-                  res.writeHead(200, { "Content-Type": "text/html" });
-                  res.end(content);
+                  res.send(result);
                 }
-              } else {
-                res.json(content);
+              } else if (result !== undefined) {
+                res.json(result);
               }
+            }).catch(next);
+          } else {
+            if (typeof content === 'string') {
+              const processedContent = `${this.styles}${content}${this._js}`;
+              const finalContent = this.minifier ? this.minifyContent(processedContent) : processedContent;
+              if (!res.headersSent) {
+                res.send(finalContent);
+              }
+            } else if (content !== undefined) {
+              res.json(content);
             }
-          } catch (err) {
-            return next(err);
           }
-        } else {
-          if (this.staticPath && req.url.startsWith(this.staticPath)) {
+        } catch (err) {
+          return next(err);
+        }
+      } else {
+        if (this.staticPath && req.url.startsWith(this.staticPath)) {
           this.serveStaticFile(req, res, () => {
             this.show404(req, res);
           });
         } else {
           this.show404(req, res);
         }
-        }
       }
-    };
-    next();
-  }
+    }
+  };
+  next();
+}
 
   handleError(err, req, res) {
-  let i = 0;
-  const next = (error) => {
-    if (i < this.errorMiddlewares.length) {
-      this.errorMiddlewares[i++](error || err, req, res, next);
-    } else {
-      const statusCode = err.statusCode || 500;
-      if (this.errorMiddlewares.length > 0) {
-        const errorContent = this.errorMiddlewares[0](err, req, res, () => {});
+    let i = 0;
+    const next = (error) => {
+      if (i < this.errorMiddlewares.length) {
+        this.errorMiddlewares[i++](error || err, req, res, next);
+      } else {
+        const statusCode = err.statusCode || 500;
+        if (this.errorMiddlewares.length > 0) {
+          const errorContent = this.errorMiddlewares[0](err, req, res, () => {});
         if (errorContent && !res.headersSent) {
           res.writeHead(statusCode, { "Content-Type": "text/html" });
           res.end(errorContent);
@@ -319,10 +369,10 @@ post(path, ...handlers) {
   const handler = handlers.pop();
   const middlewares = handlers;
   const regexPath = path.replace(/:([\w]+)/g, "(?<$1>[^/]+)");
-  
-  this.routes.push({ 
-    method: "POST", 
-    path: new RegExp(`^${regexPath}$`), 
+
+  this.routes.push({
+    method: "POST",
+    path: new RegExp(`^${regexPath}$`),
     handler: async (req, res) => {
       try {
         for (const middleware of middlewares) {
@@ -350,10 +400,10 @@ put(path, ...handlers) {
   const handler = handlers.pop();
   const middlewares = handlers;
   const regexPath = path.replace(/:([\w]+)/g, "(?<$1>[^/]+)");
-  
-  this.routes.push({ 
-    method: "PUT", 
-    path: new RegExp(`^${regexPath}$`), 
+
+  this.routes.push({
+    method: "PUT",
+    path: new RegExp(`^${regexPath}$`),
     handler: async (req, res) => {
       try {
         for (const middleware of middlewares) {
@@ -381,10 +431,10 @@ delete(path, ...handlers) {
   const handler = handlers.pop();
   const middlewares = handlers;
   const regexPath = path.replace(/:([\w]+)/g, "(?<$1>[^/]+)");
-  
-  this.routes.push({ 
-    method: "DELETE", 
-    path: new RegExp(`^${regexPath}$`), 
+
+  this.routes.push({
+    method: "DELETE",
+    path: new RegExp(`^${regexPath}$`),
     handler: async (req, res) => {
       try {
         for (const middleware of middlewares) {
@@ -436,6 +486,42 @@ group(basePath, callback) {
 
   const helpers = createRouteHelpers(basePath);
   callback(helpers);
+}
+
+  /** * Use a router module or function
+ * @param {Function|Object} router - Router function or module
+ * This method allows you to modularize routes by passing a function or module that receives the app instance.
+ */
+useRouter(router) {
+  if (typeof router === 'function') {
+    router(this);
+  } else if (typeof router === 'object' && router !== null && typeof router.default === 'function') {
+    router.default(this);
+  } else if (typeof router === 'object' && router !== null) {
+    this._registerRouterObject(router);
+  } else {
+    throw new Error('Router must be a function, a module with default export, or an object with route definitions');
+  }
+}
+
+/** * Register routes from an object
+ * @param {Object} routerObject - Object containing route definitions
+ * @private
+ */
+_registerRouterObject(routerObject) {
+  const methods = ['get', 'post', 'put', 'delete', 'group'];
+  for (const [path, routeConfig] of Object.entries(routerObject)) {
+    if (typeof routeConfig === 'function') {
+      this.get(path, routeConfig);
+    } else if (typeof routeConfig === 'object') {
+      const method = (routeConfig.method || 'get').toLowerCase();
+      const handler = routeConfig.handler;
+      const middleware = routeConfig.middleware || [];
+      if (methods.includes(method) && typeof handler === 'function') {
+        this[method](path, ...middleware, handler);
+      }
+    }
+  }
 }
 
   /** * Use a middleware function
@@ -567,7 +653,7 @@ group(basePath, callback) {
     const extname = path.extname(filePath);
     const fileType = dntm.includes(extname) ? 'binary' : 'utf-8';
     let contentType, response;
-    
+
     if (arguments.length === 2) {
         // Pattern: sendFile(filePath, res)
         response = contentTypeOrRes;
@@ -703,115 +789,17 @@ group(basePath, callback) {
     this.maxFileSize = sizeInMB * 1024 * 1024;
     this.fileHandler.maxFileSize = this.maxFileSize;
   }
-
-  setViewEngine(engine, options = {}) {
-  if (typeof engine !== 'string' && typeof engine !== 'object') {
-    throw new Error('View engine must be a string (for built-in) or module object (for third-party)');
+   setViewEngine(engine, options = {}) {
+    this.template.setViewEngine(engine, options);
   }
 
-  if (typeof options !== 'object' || Array.isArray(options)) {
-    throw new Error('Options must be an object');
+  addHelper(name, fn) {
+    this.template.addHelper(name, fn);
   }
 
-  if (typeof engine === 'string') {
-    if (engine !== 'novax') {
-      throw new Error('Built-in view engine must be "novax"');
-    }
-    this.viewEngine = 'novax';
-    this.engine = 'novax';
+  addHelpers(helpers) {
+    this.template.addHelpers(helpers);
   }
-  else {
-    this.viewEngine = engine;
-     if (engine.name && engine.name.toLowerCase() === 'pug') {
-      this.engine = (filePath, data, options, callback) => {
-        const pugOptions = {
-          filename: filePath,
-          ...this.engineOptions,
-          ...options
-        };
-        fs.readFile(filePath, 'utf8', (err, template) => {
-          if (err) return callback(err);
-          try {
-            const result = engine.render(template, {
-              ...pugOptions,
-              ...data
-            });
-            callback(null, result);
-          } catch (renderErr) {
-            callback(renderErr);
-          }
-        });
-      };
-    }
-    else if (typeof engine.__express === 'function') {
-      this.engine = engine.__express;
-    }
-    else if (typeof engine.renderFile === 'function') {
-      this.engine = engine.renderFile;
-    }
-    else if (typeof engine.compile === 'function') {
-      this.engine = (filePath, data, options, callback) => {
-        fs.readFile(filePath, 'utf8', (err, template) => {
-          if (err) return callback(err);
-          try {
-            const compiled = engine.compile(template, options);
-            const result = compiled(data);
-            callback(null, result);
-          } catch (compileErr) {
-            callback(compileErr);
-          }
-        });
-      };
-    }
-    else if (typeof engine.render === 'function') {
-      this.engine = (filePath, data, options, callback) => {
-        fs.readFile(filePath, 'utf8', (err, template) => {
-          if (err) return callback(err);
-          try {
-            const result = engine.render(template, data);
-            callback(null, result);
-          } catch (renderErr) {
-            callback(renderErr);
-          }
-        });
-      };
-    }
-    else if (typeof engine === 'function') {
-      this.engine = engine;
-    } else {
-      throw new Error('Third-party view engine doesn\'t conform to supported conventions');
-    }
-
-    if (!options.viewsType) {
-      throw new Error('viewsType must be specified when using third-party view engines');
-    }
-  }
-
-  this.viewsPath = options.viewsPath || path.join(process.cwd(), 'views');
-  this.viewHelpers = options.helpers || {};
-  this.engineOptions = options.engineOptions || {};
-  this.viewsType = options.viewsType || 'html';
-  fs.mkdirSync(this.viewsPath, { recursive: true });
-
-  this.addHelper = (name, fn) => {
-    if (typeof name !== 'string' || !name) {
-      throw new Error('Helper name must be a non-empty string');
-    }
-    if (typeof fn !== 'function') {
-      throw new Error('Helper must be a function');
-    }
-    this.viewHelpers[name] = fn;
-  };
-
-  this.addHelpers = (helpers) => {
-    if (typeof helpers !== 'object' || Array.isArray(helpers)) {
-      throw new Error('Helpers must be an object with function values');
-    }
-    for (const [name, fn] of Object.entries(helpers)) {
-      this.addHelper(name, fn);
-    }
-  };
-}
 
   /** * Use a plugin to extend the application
    * @param {Function} plugin - The plugin function to use
@@ -861,261 +849,23 @@ group(basePath, callback) {
  * @returns {Promise<string>} - Rendered HTML string
  */
   render(file, data = {}) {
-  return new Promise((resolve, reject) => {
-    if (!this.viewEngine) {
-      return reject(new Error('No view engine configured'));
-    }
-
-    if (this.viewEngine === 'novax') {
-      let filePath = null;
-      let isJsTemplate = this.viewsType === 'js';
-      
-      if (isJsTemplate) {
-        filePath = path.join(this.viewsPath, `${file}.js`);
-      } else if(this.viewsType === 'html'){
-        filePath = path.join(this.viewsPath, `${file}.html`);
-      } else {
-        return reject(new Error('Novax views engine only supports js or html'))
+    return this.template.render(file, data);
+  }
+  minifyContent(content) {
+    if (!this.minifier || typeof content !== 'string') return content;
+    if (content.trim().startsWith('{') && content.trim().endsWith('}')) {
+      try {
+        JSON.parse(content);
+        return content;
+      } catch (e) {
+        // Not valid JSON, continue with minification
       }
-
-      fs.readFile(filePath, 'utf8', (err, content) => {
-        if (err) return reject(err);
-
-        if (isJsTemplate) {
-          try {
-            const module = { exports: {} };
-            const exports = module.exports;
-            const context = {
-              ...data,
-              ...this.viewHelpers,
-              helpers: this.viewHelpers
-            };
-
-            const helperDeclarations = Object.keys(this.viewHelpers)
-              .map(helper => `const ${helper} = helpers.${helper};`)
-              .join('\n');
-
-            const templateFn = new Function(
-              'module',
-              'exports',
-              'require',
-              'data',
-              'helpers',
-              `
-                ${helperDeclarations}
-                ${content}
-                return module.exports;
-              `
-            );
-            
-            const result = templateFn(module, exports, require, data, this.viewHelpers);
-
-            if (typeof result === 'function') {
-              try {
-                const rendered = result.call(context, data);
-                if (rendered instanceof Promise) {
-                  rendered.then(resolve).catch(reject);
-                } else {
-                  resolve(rendered);
-                }
-              } catch (e) {
-                reject(e);
-              }
-            } else if (typeof result === 'string') {
-              resolve(result);
-            } else if (result && typeof result.then === 'function') {
-              result.then(resolve).catch(reject);
-            } else {
-              resolve(JSON.stringify(result));
-            }
-          } catch (e) {
-            reject(e);
-          }
-        } else {
-          const evaluate = (expr, context) => {
-            try {
-              if (expr.trim() === 'this') return context;
-
-              const evalContext = {
-                ...context,
-                ...this.viewHelpers,
-                this: context,
-                JSON: JSON
-              };
-
-              if (/^[a-zA-Z_$][0-9a-zA-Z_$]*\(.*\)$/.test(expr)) {
-                const fnName = expr.split('(')[0];
-                if (this.viewHelpers[fnName]) {
-                  const argsStr = expr.substring(fnName.length + 1, expr.length - 1);
-                  const args = argsStr.split(',').map(arg => {
-                    const trimmed = arg.trim();
-                    return evaluate(trimmed, context);
-                  });
-                  return this.viewHelpers[fnName].apply(context, args);
-                }
-              }
-
-              if (expr.startsWith('this.')) {
-                const prop = expr.substring(5);
-                return evalContext[prop];
-              }
-
-              if (expr in evalContext) {
-                return evalContext[expr];
-              }
-
-              try {
-                return new Function('data', `with(data) { return ${expr} }`)(evalContext);
-              } catch {
-                return undefined;
-              }
-            } catch {
-              return undefined;
-            }
-          };
-
-          const processConditionals = (template, context) => {
-            return template
-              .replace(
-                /\{\{#if (.+?)\}\}([\s\S]+?)((?:\{\{#elif .+?\}\}[\s\S]+?)*)\{\{#else\}\}([\s\S]+?)\{\{\/if\}\}/g,
-                (match, ifCond, ifBlock, elifBlocks, elseBlock) => {
-                  if (evaluate(ifCond, context)) return processConditionals(ifBlock, context);
-
-                  const elifMatches = [
-                    ...elifBlocks.matchAll(
-                      /\{\{#elif (.+?)\}\}([\s\S]+?)(?=(\{\{#elif|\{\{#else|\{\{\/if\}\}))/g
-                    )
-                  ];
-                  for (const [, cond, block] of elifMatches) {
-                    if (evaluate(cond, context)) return processConditionals(block, context);
-                  }
-
-                  return processConditionals(elseBlock, context);
-                }
-              )
-              .replace(/\{\{#if (.+?)\}\}([\s\S]+?)\{\{\/if\}\}/g, (_, condition, block) => {
-                return evaluate(condition, context) ? processConditionals(block, context) : '';
-              });
-          };
-
-          content = content.replace(
-            /\{\{#each (.+?)\}\}([\s\S]+?)\{\{\/each\}\}/g,
-            (_, arrayExpr, innerTemplate) => {
-              const array = evaluate(arrayExpr, data);
-              if (!Array.isArray(array)) return '';
-
-              return array
-                .map((item, index) => {
-                  let context = typeof item === 'object' ? 
-                    { 
-                      ...item, 
-                      ...this.viewHelpers,
-                      this: item, 
-                      index,
-                    } : 
-                    { 
-                      this: item, 
-                      ...this.viewHelpers,
-                      index,
-                    };
-
-                  let processed = processConditionals(innerTemplate, context);
-
-                  processed = processed.replace(/\{\{\s*(.+?)\s*\}\}/g, (_, expr) => {
-                    if (expr.startsWith('this[') && expr.endsWith(']')) {
-                      const indexExpr = expr.substring(5, expr.length - 1);
-                      const idx = evaluate(indexExpr, context);
-                      if (typeof idx === 'number' && array[idx] !== undefined) {
-                        return array[idx];
-                      }
-                      return '';
-                    }
-                    
-                    const result = evaluate(expr, context);
-                    if (result === undefined) return '';
-                    if (typeof result === 'object') return JSON.stringify(result);
-                    return result;
-                  });
-
-                  return processed;
-                })
-                .join('');
-            }
-          );
-
-          content = processConditionals(content, {
-            ...data,
-            ...this.viewHelpers
-          });
-
-          content = content.replace(/\{\{\s*(.+?)\s*\}\}/g, (_, expr) => {
-            if (expr.startsWith('this[') && expr.endsWith(']')) {
-              const indexExpr = expr.substring(5, expr.length - 1);
-              const idx = evaluate(indexExpr, data);
-              if (Array.isArray(data) && typeof idx === 'number' && data[idx] !== undefined) {
-                return data[idx];
-              }
-              return '';
-            }
-            
-            const result = evaluate(expr, {
-              ...data,
-              ...this.viewHelpers
-            });
-            if (result === undefined) return '';
-            if (typeof result === 'object') return JSON.stringify(result);
-            return result;
-          });
-
-          resolve(content);
-        }
-      });
-    } else {
-      const filePath = path.join(this.viewsPath, `${file}.${this.viewsType}`);
-      const context = { ...data, ...this.viewHelpers };
-
-      fs.access(filePath, fs.constants.F_OK, (accessErr) => {
-        if (accessErr) {
-          return reject(new Error(`Template file not found: ${filePath}`));
-        }
-
-        try {
-          if (typeof this.engine === 'function') {
-            this.engine(
-              filePath,
-              context,
-              this.engineOptions,
-              (err, html) => {
-                if (err) return reject(err);
-                resolve(html);
-              }
-            );
-          } else {
-            reject(new Error(`View engine doesn't support rendering`));
-          }
-        } catch (err) {
-          reject(err);
-        }
-      });
     }
-  });
-}
-
-minifyContent(content) {
-  if (!this.minifier || typeof content !== 'string') return content;
-  if (content.trim().startsWith('{') && content.trim().endsWith('}')) {
-    try {
-      JSON.parse(content);
+    if (content.includes('<?xml') ||
+    (content.includes('<svg') && content.includes('</svg>')) ||
+    content.trim().startsWith('<![CDATA[')) {
       return content;
-    } catch (e) {
-      // Not valid JSON, continue with minification
     }
-  }
-  if (content.includes('<?xml') || 
-      (content.includes('<svg') && content.includes('</svg>')) ||
-      content.trim().startsWith('<![CDATA[')) {
-    return content;
-  }
 
   const preserved = {
     strings: [],
@@ -1202,7 +952,6 @@ minifyContent(content) {
  */
 minifyCSS(css) {
   if (typeof css !== 'string') return css;
-  
   return css
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/\s*([{}:;,])\s*/g, '$1')

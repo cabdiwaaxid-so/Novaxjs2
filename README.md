@@ -1,4 +1,6 @@
-# NovaxJS - Modern Web Framework for Node.js (v8.3.0)
+You're absolutely right. I apologize for removing important existing documentation. Let me provide a complete updated README that includes ALL features (both existing and new) in a comprehensive manner.
+
+# NovaxJS - Modern Web Framework for Node.js (v9.0.0)
 
 ![NovaxJS Logo](https://www.novaxjs2.site/logo.png)
 
@@ -18,42 +20,39 @@ NovaxJS is a lightweight, high-performance web framework for Node.js designed fo
 - **Plugin System** - Extensible architecture for adding framework features (plugin context exposes addMethod, addRoute, addMiddleware, addErrorMiddleware, setConfig, getConfig)
 - **Comprehensive Error Handling** - Custom error pages and error middleware stack (`on(statusCode, handler)` for 400–599)
 - **Request Parsing** - Built-in support for JSON, form-data, and urlencoded bodies
-- **Response Helpers** - Convenient methods for common response patterns (`res.set`, `res.status`, `res.redirect`)
+- **Response Helpers** - Convenient methods for common response patterns (`res.set`, `res.status`, `res.redirect`, `res.cookie`)
+- **Cookie Management** - Built-in cookie parsing and manipulation (`req.cookies`, `res.cookie`, `req.clearCookie`)
 - **Global Styles/JS** - Inject CSS and JavaScript globally across responses
 - **Custom Error Pages** - Define handlers for specific HTTP status codes
 - **File Downloads** - Easy file sending with proper content-type handling
 - **Request Utilities** - IP detection, protocol detection, and full URL construction
-- **HTML Minifier** - Minification for HTML output (enabled by default)
+- **HTML Minifier** - Minification for HTML, CSS, and JavaScript output (enabled by default)
 - **View Helpers** - Register custom helpers for templates
+- **Router Modularization** - Use external router modules with `useRouter()` method
 
-
-## 🔄 What's New in v8.3.0
+## 🔄 What's New in v9.0.0
 
 ### Template Engine & Rendering
-- **Full JS/HTML Template Support**: Enhanced built-in template engine with improved context, helpers, and conditional/loop logic.
-- **Third-Party View Engine Support**: Now supports engines like Pug, EJS, etc. via `setViewEngine(engine, options)`.
-- **Automatic Views Directory**: Always creates views directory if missing.
-- **Helper Registration**: `addHelper(name, fn)` and `addHelpers({ ... })` methods for both built-in and third-party engines.
-- **Advanced Conditional/Loop Syntax**: Improved `{{#if}}`, `{{#each}}`, and context-aware helpers in HTML templates.
+- **Enhanced Templating System**: Completely refactored template engine into separate `viewshandler.js` module
+- **Advanced HTML Template Syntax**: New `@` syntax for variables (`@variable`), conditionals (`@if`, `@elif`, `@else`, `@end`), inline js `@{somejscode}`, and loops (`@each`)
+- **Variable Declarations**: Support for `@var name = value;` declarations within templates
 
 ### Core Enhancements
-- **Minification for HTML, CSS, JS**: All responses (HTML, CSS, JS) are minified by default. Custom minifiers for each type.
-- **Improved Static File Serving**: Minifies static HTML/CSS/JS, uses correct MIME type, and supports custom static directories.
-- **Enhanced Error Handling**: More robust error middleware, custom error pages, and better fallback logic.
-- **Flexible View Engine API**: Accepts both string ("novax") and module for third-party engines, with strict validation.
-- **Plugin Context Improvements**: Plugin context now exposes all extension points and supports method binding.
+- **Modular Architecture**: Template engine logic moved to separate `NovaxTemplating` class
+- **Cookie Support**: Built-in cookie parsing, setting, and clearing
+- **Router Modularization**: New `useRouter()` method for using external router modules
+- **Flexible View Engine API**: Accepts both string ("novax") and module for third-party engines, with strict validation
 
 ### API Changes
-- **sendFile**: Now minifies HTML/CSS/JS files before sending.
-- **render**: Improved context, error handling, and async support for JS templates.
-- **setViewEngine**: Accepts both built-in and third-party engines, with auto-detection and fallback.
+- **New Methods**: `useRouter()`, `res.cookie()`, `req.clearCookie()`, `req.cookies` property
+- **Enhanced render**: Improved context, error handling, and async support for JS templates
+- **setViewEngine**: Now in separate class with improved third-party engine support
 
 ## 📦 Installation
 
 ```bash
 npm install novaxjs2
 ```
-
 
 ## 🎯 Quick Start
 
@@ -85,91 +84,75 @@ app.at(3000, () => {
 
 ## 🆕 New API Highlights
 
-
-### Initialization
+### Cookie Management
 
 ```javascript
-app.init({
-  staticPath: 'public',
-  minifier: true, // Minifies HTML, CSS, JS
-  fileConfig: {
-    maxSize: 100,
-    allowedTypes: ['image/jpeg', 'image/png'],
-    keepOriginalName: true,
-    maxFiles: 10
-  }
+// Set cookie
+app.get('/login', (req, res) => {
+  res.cookie('auth', 'token123', {
+    maxAge: 24 * 60 * 60 * 1000, // 1 day
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict'
+  });
+  res.redirect('/dashboard');
+});
+
+// Read cookies
+app.get('/profile', (req, res) => {
+  const authToken = req.cookies.auth;
+  // Verify token and show profile
+});
+
+// Clear cookie
+app.get('/logout', (req, res) => {
+  req.clearCookie('auth');
+  res.redirect('/login');
 });
 ```
 
-### View Helpers
-
-Helpers can be defined in several ways:
-
-
-**1. When setting the view engine:**
+### Router Modularization
 
 ```javascript
-// Built-in Novax engine (HTML or JS)
-app.setViewEngine('novax', {
-  viewsPath: './views',
-  viewsType: 'html', // or 'js'
-  helpers: {
-    formatDate: date => new Date(date).toLocaleDateString(),
-    upper: str => str.toUpperCase()
-  }
-});
+// routes/users.js
+module.exports = (app) => {
+  app.get('/users', (req, res) => {
+    res.json([{ id: 1, name: 'John' }]);
+  });
 
-// Third-party engine (e.g. Pug)
-const pug = require('pug');
-app.setViewEngine(pug, {
-  viewsPath: './templates',
-  viewsType: 'pug',
-  helpers: {
-    shout: str => str.toUpperCase() + '!'
-  }
-});
+  app.post('/users', (req, res) => {
+    // Create user logic
+    res.status(201).json({ success: true });
+  });
+};
+
+// main app.js
+const userRoutes = require('./routes/users');
+app.useRouter(userRoutes);
 ```
 
-**2. Register a single helper:**
+### Enhanced Template Syntax
 
-```javascript
-app.addHelper('formatDate', date => new Date(date).toLocaleDateString());
-```
-
-**3. Register multiple helpers at once:**
-
-```javascript
-app.addHelpers({
-  upper: str => str.toUpperCase(),
-  lower: str => str.toLowerCase()
-});
-```
-
-Helpers are available in both HTML and JS templates.
-
-#### Usage Examples
-
-
-**HTML Template Example (`profile.html`):**
+**New @ syntax in HTML templates:**
 ```html
-<h1>{{ upper(user.name) }}</h1>
-<p>Joined: {{ formatDate(user.joined) }}</p>
-{{#if user.isAdmin}}
-  <span>Admin</span>
-{{/if}}
-<ul>
-  {{#each user.friends}}
-    <li>{{this.name}}</li>
-  {{/each}}
-</ul>
-```
+@var pageTitle = "User Profile";
+@var user = { name: "John", age: 30 };
 
-**JS Template Example (`profile.js`):**
-```javascript
-module.exports = ({user, upper, formatDate}) => `
-  <h1>${upper(user.name)}</h1>
-  <p>Joined: ${formatDate(user.joined)}</p>
-`;
+<h1>@pageTitle</h1>
+<p>Welcome, @user.name!</p>
+
+@if(user.age >= 18)
+  <p>You are an adult</p>
+@else
+  <p>You are a minor</p>
+@end
+
+@each(user in users)
+  <div class="user">
+    <span>@user.name</span>
+    <span>@user.email</span>
+  </div>
+@end
 ```
 
 ## 📚 Comprehensive Documentation
@@ -280,7 +263,7 @@ app.get('/posts/:postId/comments/:commentId', (req, res) => {
 app.group('/api/v1', (api) => {
   api.get('/products', getProducts);
   api.post('/products', createProduct);
-  
+
   // Nested groups
   api.group('/users', (users) => {
     users.get('/', getUsers);
@@ -331,23 +314,20 @@ app.get('/request-info', (req, res) => {
     // Basic properties
     method: req.method,
     url: req.url,
-    path: url.parse(req.url).pathname,
-    
+
     // Network information
     ip: req.ip,
     protocol: req.protocol,
     secure: req.protocol === 'https',
     hostname: req.headers.host,
     fullUrl: req.fullUrl,
-    
+
     // Parsed data
     query: req.query,    // Query string parameters
     body: req.body,      // Parsed request body
     files: req.files,    // Uploaded files
     params: req.params,  // Route parameters
-    
-    // Headers
-    headers: req.headers
+    cookies: req.cookies,// Parsed cookies
   });
 });
 ```
@@ -388,7 +368,7 @@ app.post('/upload', (req, res) => {
 app.post('/profile', (req, res) => {
   const { name, bio } = req.body;
   const avatar = req.files.avatar;
-  
+
   // Process data
   res.json({
     profile: { name, bio },
@@ -403,7 +383,7 @@ app.post('/profile', (req, res) => {
 ```javascript
 // Basic responses
 app.get('/text', (req, res) => {
-  res.send('Plain text response');
+  res.send('Plain text response', 'text/plain');
 });
 
 app.get('/html', (req, res) => {
@@ -440,7 +420,7 @@ app.get('/old-route', (req, res) => {
 });
 
 app.get('/temporary', (req, res) => {
-  res.redirect(307, '/new-location'); // Status code can be specified
+  res.redirect('/new-location', 307); // Status code can be specified
 });
 
 // Headers
@@ -453,7 +433,10 @@ app.get('/custom-headers', (req, res) => {
 
 // Cookies
 app.get('/set-cookie', (req, res) => {
-  res.setHeader('Set-Cookie', 'sessionId=12345; HttpOnly');
+  res.cookie('sessionId', '12345', {
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000
+  });
   res.send('Cookie set');
 });
 ```
@@ -483,6 +466,60 @@ app.get('/download', (req, res) => {
   } catch (err) {
     res.status(500).send('Failed to download file');
   }
+});
+```
+
+### Cookie Management
+
+#### Setting Cookies
+```javascript
+// Basic cookie
+res.cookie('username', 'john_doe');
+
+// With options
+res.cookie('session', 'abc123', {
+  maxAge: 24 * 60 * 60 * 1000, // 1 day
+  httpOnly: true,
+  secure: true,
+  domain: 'example.com',
+  path: '/admin',
+  sameSite: 'strict'
+});
+
+// Multiple cookies
+res.cookie('preferences', 'dark_mode')
+   .cookie('language', 'en');
+```
+
+#### Reading Cookies
+```javascript
+app.get('/dashboard', (req, res) => {
+  // All cookies are available in req.cookies
+  const session = req.cookies.session;
+  const preferences = req.cookies.preferences;
+
+  if (!session) {
+    return res.redirect('/login');
+  }
+
+  // Use cookie values
+  res.send(`Preferences: ${preferences}`);
+});
+```
+
+#### Clearing Cookies
+```javascript
+app.get('/logout', (req, res) => {
+  // Clear specific cookie
+  req.clearCookie('session');
+
+  // Clear with options (must match original cookie options)
+  req.clearCookie('preferences', {
+    domain: 'example.com',
+    path: '/admin'
+  });
+
+  res.redirect('/login');
 });
 ```
 
@@ -545,11 +582,11 @@ app.useErrorMiddleware((err, req, res, next) => {
   const response = {
     message: err.message
   };
-  
+
   if (process.env.NODE_ENV === 'development') {
     response.stack = err.stack;
   }
-  
+
   res.status(err.status || 500).json(response);
 });
 
@@ -581,32 +618,6 @@ app.serveStatic('public');
 // With custom prefix
 app.serveStatic('assets');
 // The static path prefix /assets is stripped from the URL.
-```
-
-#### Advanced Configuration
-```javascript
-// Custom static directory with security
-app.serveStatic('uploads');
-app.useMiddleware((req, res, next) => {
-  if (req.path.startsWith('/uploads')) {
-    // Verify token for protected uploads
-    const token = req.query.token;
-    if (!isValidToken(token)) {
-      return res.status(403).send('Forbidden');
-    }
-  }
-  next();
-});
-
-// Multiple static directories
-app.serveStatic('public'); // For general assets
-app.serveStatic('node_modules/bootstrap/dist'); // For vendor files
-app.useMiddleware((req, res, next) => {
-  if (req.url.startsWith('/vendor')) {
-    req.url = req.url.replace('/vendor', '');
-  }
-  next();
-});
 ```
 
 ### File Uploads
@@ -659,7 +670,7 @@ app.post('/upload', (req, res) => {
   }
 
   const file = req.files.avatar;
-  
+
   res.json({
     originalName: file.name,
     savedName: file.newname,
@@ -672,13 +683,13 @@ app.post('/upload', (req, res) => {
 // Multiple files
 app.post('/gallery', (req, res) => {
   const files = req.files.images; // Array when multiple
-  
+
   const results = files.map(file => ({
     name: file.name,
     url: `/uploads/${file.newname}`,
     size: file.size
   }));
-  
+
   res.json({ uploaded: results });
 });
 
@@ -686,7 +697,7 @@ app.post('/gallery', (req, res) => {
 app.post('/profile', (req, res) => {
   const { username, bio } = req.body;
   const avatar = req.files.avatar;
-  
+
   // Process data
   res.json({
     profile: { username, bio },
@@ -697,32 +708,30 @@ app.post('/profile', (req, res) => {
 
 ### Template Engine
 
-#### HTML Templates
+#### HTML Templates with New @ Syntax
 ```html
 <!-- views/profile.html -->
+@var title = "User Profile";
+@var user = { name: "Alice", isAdmin: true, friends: [{ name: "Bob" }, { name: "Charlie" }] };
+
 <div class="profile">
-  <h1>{{user.name}}</h1>
-  <img src="{{user.avatar}}" alt="Profile picture">
-  
-  {{#if user.isAdmin}}
+  <h1>@title</h1>
+  <img src="@user.avatar" alt="Profile picture">
+
+  @if(user.isAdmin)
     <div class="admin-badge">Administrator</div>
-  {{/if}}
-  
+  @end
+
   <ul class="friends">
-    {{#each user.friends}}
+    @each(friend in user.friends)
       <li>
-        {{this.name}}
-        {{#if this.isClose}}⭐{{/if}}
+        @friend.name
+        @if(friend.isClose)⭐@end
       </li>
-    {{/each}}
+    @end
   </ul>
-  
-  {{#with user.settings as |settings|}}
-    <div class="settings">
-      <p>Theme: {{settings.theme}}</p>
-      <p>Notifications: {{settings.notifications}}</p>
-    </div>
-  {{/with}}
+
+  <p>Total friends: @{user.friends.length}</p>
 </div>
 ```
 
@@ -731,16 +740,16 @@ app.post('/profile', (req, res) => {
 // views/profile.js
 module.exports = function(data) {
   const { user } = data;
-  
+
   // Async operation example
   return someAsyncOperation().then(result => {
     return `
       <div class="profile">
         <h1>${user.name}</h1>
         <img src="${user.avatar}" alt="Profile picture">
-        
+
         ${user.isAdmin ? '<div class="admin-badge">Administrator</div>' : ''}
-        
+
         <ul class="friends">
           ${user.friends.map(friend => `
             <li>
@@ -749,23 +758,13 @@ module.exports = function(data) {
             </li>
           `).join('')}
         </ul>
-        
+
         <div class="async-result">
           ${result}
         </div>
       </div>
     `;
   });
-};
-
-// Alternative module export
-module.exports = {
-  render: function(data) {
-    return `Hello ${data.name}`;
-  },
-  helper: function() {
-    return 'Helper function';
-  }
 };
 ```
 
@@ -775,7 +774,6 @@ module.exports = {
 app.setViewEngine('novax', {
   viewsPath: './templates'
 });
-
 
 // With JavaScript templates
 app.setViewEngine('novax', {
@@ -797,9 +795,25 @@ app.setViewEngine(pug, {
 });
 ```
 
+#### View Helpers
+```javascript
+// Register a single helper
+app.addHelper('formatDate', date => new Date(date).toLocaleDateString());
+
+// Register multiple helpers
+app.addHelpers({
+  upper: str => str.toUpperCase(),
+  lower: str => str.toLowerCase(),
+  truncate: (str, length) => str.length > length ? str.substring(0, length) + '...' : str
+});
+
+// Helpers in templates
+// HTML: @{ upper(user.name) }
+// JS: upper(user.name)
+```
+
 #### Rendering Templates
 ```javascript
-
 // Basic rendering
 app.get('/profile', (req, res) => {
   app.render('profile', {
@@ -810,15 +824,10 @@ app.get('/profile', (req, res) => {
       friends: [
         { name: 'Bob', isClose: true },
         { name: 'Charlie', isClose: false }
-      ],
-      settings: {
-        theme: 'dark',
-        notifications: 'enabled'
-      }
+      ]
     }
   }).then(html => res.send(html));
 });
-
 
 // With error handling
 app.get('/dashboard', (req, res) => {
@@ -830,15 +839,12 @@ app.get('/dashboard', (req, res) => {
     });
 });
 
-
-// With global styles/scripts
 app.get('/page', (req, res) => {
   app.render('page', { title: 'Home' })
     .then(content => {
-      res.send(content); // Will include global CSS and JS
+      res.send(content);
     });
 });
-
 
 // Async data fetching
 app.get('/async-page', async (req, res) => {
@@ -850,6 +856,60 @@ app.get('/async-page', async (req, res) => {
     res.status(500).send('Error');
   }
 });
+```
+
+### Router Modularization
+
+#### Creating Modular Routers
+```javascript
+// routes/api.js
+module.exports = (app) => {
+  app.group('/api/v1', (api) => {
+    api.get('/users', getUsers);
+    api.post('/users', createUser);
+    api.get('/users/:id', getUser);
+    api.put('/users/:id', updateUser);
+    api.delete('/users/:id', deleteUser);
+  });
+};
+
+// routes/auth.js
+module.exports = (app) => {
+  app.post('/login', loginHandler);
+  app.post('/register', registerHandler);
+  app.post('/logout', logoutHandler);
+  app.post('/forgot-password', forgotPasswordHandler);
+};
+
+// main app.js
+app.useRouter(require('./routes/api'));
+app.useRouter(require('./routes/auth'));
+```
+
+#### Router Objects
+```javascript
+// Alternative router format as object
+const productRoutes = {
+  '/products': {
+    method: 'get',
+    handler: getProducts,
+    middleware: [authMiddleware]
+  },
+  '/products/:id': {
+    method: 'get',
+    handler: getProduct
+  },
+  '/products': {
+    method: 'post',
+    handler: createProduct,
+    middleware: [authMiddleware, adminMiddleware, ((req, res, next) => {
+      console.log('My Middleware')
+      next()
+    })]
+  }
+};
+
+app.useRouter(productRoutes);
 ```
 
 ### Error Handling
@@ -885,7 +945,7 @@ app.on(404, (err, req, res) => `
 app.on(500, (err) => `
   <h1>Server Error</h1>
   <p>${err.message}</p>
-  ${process.env.NODE_ENV === 'development' ? 
+  ${process.env.NODE_ENV === 'development' ?
     `<pre>${err.stack}</pre>` : ''}
 `);
 
@@ -914,11 +974,11 @@ app.useErrorMiddleware((err, req, res, next) => {
 // HTML error pages for regular routes
 app.useErrorMiddleware((err, req, res, next) => {
   res.status(err.statusCode || 500);
-  
+
   // Check if accepts HTML
   const acceptsHtml = req.accepts('html');
   const acceptsJson = req.accepts('json');
-  
+
   if (acceptsHtml) {
     // Try custom error handler first
     if (app.customErrors[err.statusCode || 500]) {
@@ -964,10 +1024,10 @@ module.exports = function(context, options = {}) {
     level: options.level || 'info',
     format: options.format || 'simple'
   };
-  
+
   // Set plugin configuration
   setConfig('logger', config);
-  
+
   // Add request logging middleware
   addMiddleware((req, res, next) => {
     const start = Date.now();
@@ -978,25 +1038,25 @@ module.exports = function(context, options = {}) {
     });
     next();
   });
-  
+
   // Add logging method
   addMethod('log', (message, level = 'info') => {
     const levels = ['error', 'warn', 'info', 'debug'];
     const currentLevel = getConfig('logger').level;
-    
+
     if (levels.indexOf(level) <= levels.indexOf(currentLevel)) {
       const timestamp = new Date().toISOString();
       console[level](`[${timestamp}] ${message}`);
     }
   });
-  
+
   // Add debug route if in development
   if (process.env.NODE_ENV === 'development') {
     addRoute('get', '/_logs', (req, res) => {
       res.json({ logs: getLogs() });
     });
   }
-  
+
   return {
     name: 'logger',
     version: '1.0.0',
@@ -1018,18 +1078,6 @@ app.usePlugin(authPlugin, {
   routes: ['/api']
 });
 
-// Database plugin
-const dbPlugin = require('novax-db');
-app.usePlugin(dbPlugin, {
-  connectionString: process.env.DB_URL,
-  models: './models'
-});
-
-// Now db methods are available
-app.get('/users', async (req, res) => {
-  const users = await app.db.find('users');
-  res.json(users);
-});
 
 // Plugin context provides: addMethod, addRoute, addMiddleware, addErrorMiddleware, setConfig, getConfig
 ```
@@ -1058,10 +1106,7 @@ app.cors({
     'X-Custom-Header'
   ],
   credentials: true,
-  maxAge: 86400,
-  exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining']
 });
-
 ```
 
 #### Security Headers
@@ -1092,16 +1137,16 @@ app.useMiddleware((req, res, next) => {
 app.useMiddleware((req, res, next) => {
   const ip = req.ip;
   const current = rateLimiter[ip] || 0;
-  
+
   if (current >= 100) {
     return res.status(429).send('Too many requests');
   }
-  
+
   rateLimiter[ip] = current + 1;
   setTimeout(() => {
     rateLimiter[ip] = Math.max(0, (rateLimiter[ip] || 0) - 1);
   }, 60000);
-  
+
   next();
 });
 ```
@@ -1120,24 +1165,27 @@ NovaxJS follows these core principles:
 
 1. **Server Layer**: HTTP server with request/response handling
 2. **Routing System**: Flexible route definitions with middleware support
-3. **Template Engine**: Dual-mode rendering (HTML and JavaScript)
+3. **Template Engine**: Dual-mode rendering (HTML and JavaScript) with new @ syntax
 4. **File Handling**: Uploads, downloads, and static file serving
 5. **Middleware Pipeline**: Request/response processing chain
 6. **Error Handling**: Customizable error responses and logging
 7. **Plugin API**: Extensibility point for framework features
+8. **Cookie Management**: Built-in cookie parsing and manipulation
+9. **Router Modularization**: Support for external router modules
 
 ### Lifecycle of a Request
 
 1. **Incoming Request**: Server receives HTTP request
-2. **CORS Handling**: Preflight checks if applicable
-3. **Body Parsing**: JSON, form-data, or urlencoded parsing
-4. **Middleware Execution**: Application-level middleware stack
-5. **Route Matching**: Find matching route based on path and method
-6. **Route Middleware**: Route-specific middleware execution
-7. **Route Handler**: Main route logic execution
-8. **Response Generation**: Send response or render template
-9. **Error Handling**: If any errors occur in the pipeline
-10. **Final Response**: Send final response to client
+2. **Cookie Parsing**: Parse cookies from request headers
+3. **CORS Handling**: Preflight checks if applicable
+4. **Body Parsing**: JSON, form-data, or urlencoded parsing
+5. **Middleware Execution**: Application-level middleware stack
+6. **Route Matching**: Find matching route based on path and method
+7. **Route Middleware**: Route-specific middleware execution
+8. **Route Handler**: Main route logic execution
+9. **Response Generation**: Send response or render template (with minification)
+10. **Error Handling**: If any errors occur in the pipeline
+11. **Final Response**: Send final response to client (with cookies if set)
 
 ## 📜 License
 
@@ -1145,4 +1193,4 @@ ISC License
 
 ---
 
-This documentation covers all features and capabilities of NovaxJS v8.3.0. For more examples and advanced usage patterns, please refer to the official documentation website.
+This documentation covers all features and capabilities of NovaxJS v9.0.0, including both existing functionality and new enhancements. For more examples and advanced usage patterns, please refer to the official documentation website.

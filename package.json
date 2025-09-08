@@ -1,6 +1,6 @@
 {
   "name": "novaxjs2",
-  "version": "8.3.0",
+  "version": "9.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -40,6 +40,7 @@
     "index.js",
     "README.md",
     "filehandler.js",
-    "mimetype.json"
+    "mimetype.json",
+    "viewshandler.js"
   ]
 }

@@ -113,7 +113,16 @@ class FileHandler {
           data: part.data,
           path: filePath,
           ext: fileExt,
-          mimetype: contentType
+          mimetype: contentType,
+          mv: (destPath) => {
+            return new Promise((resolve, reject) => {
+              fs.rename(filePath, destPath, (err) => {
+                if (err) return reject(err);
+                resolve();
+              });
+            });
+          },
+          remove: () => this.removeFile(filePath)
         };
 
         // Validate file against configuration
