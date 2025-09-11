@@ -1,4 +1,4 @@
-# NovaxJS - Modern Web Framework for Node.js (v9.0.0)
+# NovaxJS - Modern Web Framework for Node.js (v9.3.4)
 
 ![NovaxJS Logo](https://www.novaxjs2.site/logo.png)
 
@@ -10,12 +10,15 @@ NovaxJS is a lightweight, high-performance web framework for Node.js designed fo
 
 - **Blazing Fast** - Optimized for performance with low memory footprint
 - **Intuitive Routing** - Simple yet powerful route definitions with parameter support (named regex groups)
-- **Dual Template Engine** - Supports both HTML templates with Novax syntax and JavaScript template files
+- **Advanced Template Engine** - Enhanced HTML templates with new @ syntax including @include directives, destructuring, and function calls
+- **File Include Support** - New `@include('file.html')` and `@include('file.html', {data})` syntax
+- **Destructuring Support** - Object and array destructuring in `@var` declarations
+- **Function Call Support** - Direct function calls in templates with `@functionName(args)`
 - **Advanced File Handling** - Robust file uploads with configurable limits and validation (maxSize in MB)
 - **Middleware Pipeline** - Flexible middleware architecture with error handling (`useMiddleware`, `useErrorMiddleware`)
 - **Static File Serving** - Efficient static file delivery with automatic MIME type detection and static path prefix stripping
 - **CORS Support** - Configurable CORS policies with preflight handling (`cors` method)
-- **Plugin System** - Extensible architecture for adding framework features (plugin context exposes addMethod, addRoute, addMiddleware, addErrorMiddleware, setConfig, getConfig)
+- **Plugin System** - Extensible architecture for adding framework features
 - **Comprehensive Error Handling** - Custom error pages and error middleware stack (`on(statusCode, handler)` for 400–599)
 - **Request Parsing** - Built-in support for JSON, form-data, and urlencoded bodies
 - **Response Helpers** - Convenient methods for common response patterns (`res.set`, `res.status`, `res.redirect`, `res.cookie`)
@@ -28,23 +31,15 @@ NovaxJS is a lightweight, high-performance web framework for Node.js designed fo
 - **View Helpers** - Register custom helpers for templates
 - **Router Modularization** - Use external router modules with `useRouter()` method
 
-## 🔄 What's New in v9.0.0
+## 🔄 What's New in v9.3.4
 
 ### Template Engine & Rendering
-- **Enhanced Templating System**: Completely refactored template engine into separate `viewshandler.js` module
-- **Advanced HTML Template Syntax**: New `@` syntax for variables (`@variable`), conditionals (`@if`, `@elif`, `@else`, `@end`), inline js `@{somejscode}`, and loops (`@each`)
-- **Variable Declarations**: Support for `@var name = value;` declarations within templates
-
-### Core Enhancements
-- **Modular Architecture**: Template engine logic moved to separate `NovaxTemplating` class
-- **Cookie Support**: Built-in cookie parsing, setting, and clearing
-- **Router Modularization**: New `useRouter()` method for using external router modules
-- **Flexible View Engine API**: Accepts both string ("novax") and module for third-party engines, with strict validation
-
-### API Changes
-- **New Methods**: `useRouter()`, `res.cookie()`, `req.clearCookie()`, `req.cookies` property
-- **Enhanced render**: Improved context, error handling, and async support for JS templates
-- **setViewEngine**: Now in separate class with improved third-party engine support
+- **Enhanced Templating System**: Completely refactored template engine with advanced features
+- **File Includes**: New `@include('filename.html')` and `@include('filename.html', {data})` syntax
+- **Destructuring Support**: Object and array destructuring in `@var` declarations
+- **Function Calls**: Direct function calls in templates with `@functionName(args)`
+- **Advanced Variable Handling**: Improved dot notation support for object properties
+- **Recursive Processing**: Support for nested includes and complex template structures
 
 ## 📦 Installation
 
@@ -82,74 +77,80 @@ app.at(3000, () => {
 
 ## 🆕 New API Highlights
 
-### Cookie Management
-
-```javascript
-// Set cookie
-app.get('/login', (req, res) => {
-  res.cookie('auth', 'token123', {
-    maxAge: 24 * 60 * 60 * 1000, // 1 day
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict'
-  });
-  res.redirect('/dashboard');
-});
-
-// Read cookies
-app.get('/profile', (req, res) => {
-  const authToken = req.cookies.auth;
-  // Verify token and show profile
-});
-
-// Clear cookie
-app.get('/logout', (req, res) => {
-  req.clearCookie('auth');
-  res.redirect('/login');
-});
-```
-
-### Router Modularization
-
-```javascript
-// routes/users.js
-module.exports = (app) => {
-  app.get('/users', (req, res) => {
-    res.json([{ id: 1, name: 'John' }]);
-  });
-
-  app.post('/users', (req, res) => {
-    // Create user logic
-    res.status(201).json({ success: true });
-  });
-};
-
-// main app.js
-const userRoutes = require('./routes/users');
-app.useRouter(userRoutes);
-```
-
 ### Enhanced Template Syntax
 
-**New @ syntax in HTML templates:**
+**New @ syntax in HTML templates with includes and destructuring:**
 ```html
-@var pageTitle = "User Profile";
-@var user = { name: "John", age: 30 };
+@var {title, content} = pageData;
+@var [firstItem, secondItem] = itemList;
 
-<h1>@pageTitle</h1>
-<p>Welcome, @user.name!</p>
+<h1>@title</h1>
+<div>@content</div>
 
-@if(user.age >= 18)
-  <p>You are an adult</p>
-@else
-  <p>You are a minor</p>
-@end
+@include('header.html')
+@include('navbar.html', {currentPage: 'home'})
 
 @each(user in users)
-  <div class="user">
-    <span>@user.name</span>
-    <span>@user.email</span>
-  </div>
+  @include('user-card.html', {user: user})
+@end
+
+@if(user.isAdmin)
+  @include('admin-panel.html')
+@end
+
+@{ formatDate(user.createdAt) }
+@customHelper(user.name)
+```
+
+### File Includes
+
+```html
+<!-- main-template.html -->
+@var pageTitle = "Home Page";
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>@pageTitle</title>
+    @include('head.html')
+</head>
+<body>
+    @include('header.html', {showBanner: true})
+
+    <main>
+        @include('content.html', {content: pageContent})
+    </main>
+
+    @include('footer.html', {year: 2024})
+</body>
+</html>
+```
+
+### Destructuring Support
+
+```html
+@var {name, age, email} = user;
+@var [first, second, ...rest] = items;
+
+<p>Name: @name</p>
+<p>Age: @age</p>
+<p>Email: @email</p>
+
+<p>First item: @first</p>
+<p>Second item: @second</p>
+```
+
+### Function Calls
+
+```html
+@var formattedDate = formatDate(createdAt);
+@var fullName = getFullName(user.firstName, user.lastName);
+
+<p>Created: @formattedDate</p>
+<p>Welcome, @fullName!</p>
+
+@if(isAdmin(user.role))
+  <div class="admin-badge">Administrator</div>
 @end
 ```
 
@@ -706,6 +707,109 @@ app.post('/profile', (req, res) => {
 
 ### Template Engine
 
+#### Enhanced HTML Templates with New Features
+
+**File Includes:**
+```html
+@include('header.html')
+@include('navbar.html', {currentPage: 'products'})
+@include('footer.html', {showCopyright: true})
+```
+
+**Destructuring:**
+```html
+@var {title, description, price} = product;
+@var [mainImage, ...otherImages] = images;
+
+<h2>@title</h2>
+<p>@description</p>
+<span class="price">$@price</span>
+```
+
+**Function Calls:**
+```html
+@var discountedPrice = calculateDiscount(price, discountPercent);
+@var isAvailable = checkAvailability(productId);
+
+@if(isAvailable)
+  <button class="buy-btn">Buy for $@discountedPrice</button>
+@end
+```
+
+**Complex Examples:**
+```html
+@var {user: {name, email}, orders: [latestOrder, ...otherOrders]} = data;
+
+<div class="profile">
+  <h2>@name</h2>
+  <p>@email</p>
+
+  @include('order-history.html', {orders: otherOrders})
+
+  @if(latestOrder)
+    @include('latest-order.html', {order: latestOrder})
+  @end
+</div>
+```
+
+#### Configuration
+```javascript
+// Basic setup with enhanced features
+app.setViewEngine('novax', {
+  viewsPath: './templates',
+  helpers: {
+    formatDate: date => new Date(date).toLocaleDateString(),
+    calculateDiscount: (price, discount) => price * (1 - discount/100),
+    checkAvailability: productId => inventory[productId] > 0
+  }
+});
+
+// Register additional helpers
+app.addHelper('uppercase', str => str.toUpperCase());
+app.addHelper('truncate', (str, length) =>
+  str.length > length ? str.substring(0, length) + '...' : str
+);
+```
+
+#### Rendering Templates with Includes
+```javascript
+app.get('/profile', async (req, res) => {
+  try {
+    const html = await app.render('profile', {
+      user: req.user,
+      orders: await getOrders(req.user.id),
+      stats: await getUserStats(req.user.id)
+    });
+    res.send(html);
+  } catch (error) {
+    res.status(500).send('Error loading profile');
+  }
+});
+```
+
+
+### Advanced Include Usage
+
+**With complex data:**
+```html
+@include('user-card.html', {
+  user: user,
+  showDetails: true,
+  options: {
+    theme: 'dark',
+    size: 'large'
+  }
+})
+```
+
+**With function calls:**
+```html
+@include('notification.html', {
+  message: formatMessage('welcome', user.name),
+  type: getNotificationType(user.status)
+})
+```
+
 #### HTML Templates with New @ Syntax
 ```html
 <!-- views/profile.html -->
@@ -1191,4 +1295,4 @@ ISC License
 
 ---
 
-This documentation covers all features and capabilities of NovaxJS v9.0.0, including both existing functionality and new enhancements. For more examples and advanced usage patterns, please refer to the official documentation website.
+This documentation covers all features and capabilities of NovaxJS v9.3.4, including both existing functionality and new enhancements. For more examples and advanced usage patterns, please refer to the official documentation website.

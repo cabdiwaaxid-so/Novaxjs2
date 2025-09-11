@@ -1,6 +1,6 @@
 {
   "name": "novaxjs2",
-  "version": "9.0.1",
+  "version": "9.3.4",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"

@@ -133,7 +133,7 @@ class NovaxTemplating {
   _renderNovax(file, data, resolve, reject) {
     let filePath = null;
     let isJsTemplate = this.viewsType === 'js';
-    
+
     if (isJsTemplate) {
       filePath = path.join(this.viewsPath, `${file}.js`);
     } else if (this.viewsType === 'html') {
@@ -179,7 +179,7 @@ class NovaxTemplating {
           return module.exports;
         `
       );
-      
+
       const result = templateFn(module, exports, require, data, this.viewHelpers);
 
       if (typeof result === 'function') {
@@ -217,6 +217,7 @@ class NovaxTemplating {
           JSON: JSON
         };
 
+        // Check if this is a helper function call
         if (/^[a-zA-Z_$][0-9a-zA-Z_$]*\(.*\)$/.test(expr)) {
           const fnName = expr.split('(')[0];
           if (this.viewHelpers[fnName]) {
@@ -248,181 +249,396 @@ class NovaxTemplating {
       }
     };
 
-    // Process @var declarations
-    content = content.replace(/@var\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*([^;]+);/g, (_, varName, varValue) => {
-      const value = evaluate(varValue.trim(), data);
-      data[varName] = value;
-      return '';
-    });
+    // Process @include directives first
+    const processIncludes = async (template, context) => {
+      const includeRegex = /@include\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*({[^}]*}))?\s*\)/g;
+      let result = template;
+      let match;
 
-    // Process @variable syntax (shortcut for variables)
-    content = content.replace(/@([a-zA-Z_$][a-zA-Z0-9_$]*)/g, (_, varName) => {
-      const value = evaluate(varName, data);
-      if (value === undefined) return `@${varName}`; // Return original if not found
-      if (typeof value === 'object') return JSON.stringify(value);
-      return value;
-    });
+      while ((match = includeRegex.exec(template)) !== null) {
+        const includeFile = match[1];
+        const includeDataStr = match[2] || '{}';
+        const includePath = path.join(this.viewsPath, includeFile);
 
-    const processConditionals = (template, context) => {
-      return template
-        .replace(
-          /@if\s*\((.+?)\)\s*([\s\S]+?)((?:@elif\s*\(.+?\)\s*[\s\S]+?)*)@else\s*([\s\S]+?)@end/g,
-          (match, ifCond, ifBlock, elifBlocks, elseBlock) => {
-            if (evaluate(ifCond, context)) return processConditionals(ifBlock, context);
-
-            const elifMatches = [
-              ...elifBlocks.matchAll(
-                /@elif\s*\((.+?)\)\s*([\s\S]+?)(?=(@elif|@else|@end))/g
-              )
-            ];
-            for (const [, cond, block] of elifMatches) {
-              if (evaluate(cond, context)) return processConditionals(block, context);
+        try {
+          // Parse the include data object - handle both single and double quotes
+          let includeData = {};
+          if (includeDataStr !== '{}') {
+            try {
+              // Use a safer approach to evaluate the data object
+              const dataExpr = includeDataStr.trim();
+              if (dataExpr.startsWith('{') && dataExpr.endsWith('}')) {
+                // Create a function that returns the object with the current context
+                const dataFn = new Function('data', `with(data) { return ${dataExpr} }`);
+                includeData = dataFn({ ...context, ...this.viewHelpers });
+              } else {
+                // Try to evaluate as a variable name
+                includeData = evaluate(dataExpr, context);
+                if (typeof includeData !== 'object') {
+                  includeData = {};
+                }
+              }
+            } catch (e) {
+              console.warn(`Warning: Could not parse include data for ${includeFile}:`, includeDataStr);
+              includeData = {};
             }
-
-            return processConditionals(elseBlock, context);
           }
-        )
-        .replace(/@if\s*\((.+?)\)\s*([\s\S]+?)@end/g, (_, condition, block) => {
-          return evaluate(condition, context) ? processConditionals(block, context) : '';
-        });
+
+          // Merge parent context with include-specific data
+          const mergedData = { ...context, ...includeData };
+
+          const includedContent = await fs.promises.readFile(includePath, 'utf8');
+
+          // Recursively process the included content with the merged data
+          const processedInclude = await this._processTemplateContent(includedContent, mergedData);
+          result = result.replace(match[0], processedInclude);
+        } catch (err) {
+          console.warn(`Warning: Could not include file ${includeFile}: ${err.message}`);
+          result = result.replace(match[0], '');
+        }
+      }
+
+      return result;
     };
 
-    // Process @each loops with multiple syntaxes
-    content = content.replace(
-      /@each\s*\(([^)]+)\)\s*([\s\S]+?)@end/g,
-      (_, loopExpr, innerTemplate) => {
-        let arrayExpr, itemVar, indexVar;
+    // Helper method to process template content recursively
+    this._processTemplateContent = async (templateContent, contextData) => {
+      // Process @var declarations with destructuring support
+      const processVarDeclarations = (content, context) => {
+        return content.replace(/@var\s+({[^}]+}|\[[^\]]+\]|[a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*([\s\S]*?);(?=\s*@|\s*$|\s*<)/g, (_, pattern, valueExpr) => {
+          const value = evaluate(valueExpr.trim(), context);
 
-        // Parse different @each syntaxes
-        if (loopExpr.includes(' in ')) {
-          // Syntax: @each(item in items) or @each(item, index in items)
-          const loopMatch = loopExpr.match(/^\s*([^,\s]+)(?:\s*,\s*([^,\s]+))?\s+in\s+(.+)\s*$/);
-          if (!loopMatch) return '';
-          
-          itemVar = loopMatch[1];
-          indexVar = loopMatch[2] || 'index';
-          arrayExpr = loopMatch[3];
-        } else {
-          // Syntax: @each(items) - use default variable names
-          arrayExpr = loopExpr.trim();
-          itemVar = 'item';
-          indexVar = 'index';
+          if (pattern.startsWith('{') && pattern.endsWith('}')) {
+            // Object destructuring: @var {prop1, prop2} = obj
+            const props = pattern.slice(1, -1).split(',').map(p => p.trim());
+            props.forEach(prop => {
+              if (prop.includes(':')) {
+                // Aliasing: @var {original: alias} = obj
+                const [original, alias] = prop.split(':').map(p => p.trim());
+                context[alias] = value[original];
+              } else {
+                context[prop] = value[prop];
+              }
+            });
+          } else if (pattern.startsWith('[') && pattern.endsWith(']')) {
+            // Array destructuring: @var [first, second] = arr
+            const vars = pattern.slice(1, -1).split(',').map(v => v.trim());
+            vars.forEach((varName, index) => {
+              if (varName) {
+                context[varName] = value[index];
+              }
+            });
+          } else {
+            // Simple variable assignment: @var name = value
+            context[pattern] = value;
+          }
+
+          return '';
+        });
+      };
+
+      let processedContent = processVarDeclarations(templateContent, contextData);
+
+      // Process function calls - check both helpers and variables that are functions
+      const processFunctionCalls = (content, context) => {
+        return content.replace(/@([a-zA-Z_$][a-zA-Z0-9_$]*)\(([^)]*)\)/g, (_, funcName, argsStr) => {
+          // Check if it's a helper function
+          if (this.viewHelpers[funcName]) {
+            const args = argsStr.split(',').map(arg => {
+              const trimmed = arg.trim();
+              // Remove quotes if it's a string literal
+              if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+                  (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+                return trimmed.slice(1, -1);
+              }
+              // Evaluate expression if it's a variable
+              const evaluated = evaluate(trimmed, context);
+              return evaluated !== undefined ? evaluated : trimmed;
+            });
+
+            try {
+              const result = this.viewHelpers[funcName].apply(context, args);
+              if (typeof result === 'object') return JSON.stringify(result);
+              return result;
+            } catch (e) {
+              console.warn(`Error executing helper ${funcName}:`, e);
+              return '';
+            }
+          }
+
+          // Check if it's a variable function defined with @var
+          const func = context[funcName];
+          if (typeof func === 'function') {
+            const args = argsStr.split(',').map(arg => {
+              const trimmed = arg.trim();
+              // Remove quotes if it's a string literal
+              if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+                  (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+                return trimmed.slice(1, -1);
+              }
+              // Evaluate expression if it's a variable
+              const evaluated = evaluate(trimmed, context);
+              return evaluated !== undefined ? evaluated : trimmed;
+            });
+
+            try {
+              const result = func.apply(context, args);
+              if (typeof result === 'object') return JSON.stringify(result);
+              return result;
+            } catch (e) {
+              console.warn(`Error executing variable function ${funcName}:`, e);
+              return '';
+            }
+          }
+
+          return `@${funcName}(${argsStr})`; // Return original if function not found
+        });
+      };
+
+      // Process @variable syntax (shortcut for variables) - FIXED VERSION
+      processedContent = processedContent.replace(/@([a-zA-Z_$][a-zA-Z0-9_$]*(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)*)/g, (_, varPath) => {
+        // Don't process if it's part of a helper function call
+        if (processedContent.indexOf(`@${varPath}(`) > -1) {
+          return `@${varPath}`;
         }
 
-        const array = evaluate(arrayExpr, data);
-        if (!Array.isArray(array) && typeof array !== 'object') return '';
+        // Handle dot notation for object properties
+        const parts = varPath.split('.');
+        let value = contextData;
 
-        if (typeof array === 'object' && !Array.isArray(array)) {
-          return Object.entries(array)
-            .map(([key, value], idx) => {
-              const context = {
-                ...data,
+        for (const part of parts) {
+          if (value === null || value === undefined) break;
+          value = value[part];
+        }
+
+        if (value === undefined) {
+          // Check if it's a helper function without parentheses
+          if (this.viewHelpers[varPath]) {
+            return `@${varPath}`; // Return original for helper functions without ()
+          }
+          return `@${varPath}`; // Return original if not found
+        }
+
+        if (typeof value === 'object') return JSON.stringify(value);
+        return value;
+      });
+
+      // Process function calls in the main content
+      processedContent = processFunctionCalls(processedContent, contextData);
+
+      const processConditionals = (template, context) => {
+        return template
+          .replace(
+            /@if\s*\((.+?)\)\s*([\s\S]+?)((?:@elif\s*\(.+?\)\s*[\s\S]+?)*)@else\s*([\s\S]+?)@end/g,
+            (match, ifCond, ifBlock, elifBlocks, elseBlock) => {
+              if (evaluate(ifCond, context)) return processConditionals(ifBlock, context);
+
+              const elifMatches = [
+                ...elifBlocks.matchAll(
+                  /@elif\s*\((.+?)\)\s*([\s\S]+?)(?=(@elif|@else|@end))/g
+                )
+              ];
+              for (const [, cond, block] of elifMatches) {
+                if (evaluate(cond, context)) return processConditionals(block, context);
+              }
+
+              return processConditionals(elseBlock, context);
+            }
+          )
+          .replace(/@if\s*\((.+?)\)\s*([\s\S]+?)@end/g, (_, condition, block) => {
+            return evaluate(condition, context) ? processConditionals(block, context) : '';
+          });
+      };
+
+      // Process @each loops with multiple syntaxes
+      processedContent = processedContent.replace(
+        /@each\s*\(([^)]+)\)\s*([\s\S]+?)@end/g,
+        (_, loopExpr, innerTemplate) => {
+          let arrayExpr, itemVar, indexVar;
+
+          // Parse different @each syntaxes
+          if (loopExpr.includes(' in ')) {
+            // Syntax: @each(item in items) or @each(item, index in items)
+            const loopMatch = loopExpr.match(/^\s*([^,\s]+)(?:\s*,\s*([^,\s]+))?\s+in\s+(.+)\s*$/);
+            if (!loopMatch) return '';
+
+            itemVar = loopMatch[1];
+            indexVar = loopMatch[2] || 'index';
+            arrayExpr = loopMatch[3];
+          } else {
+            // Syntax: @each(items) - use default variable names
+            arrayExpr = loopExpr.trim();
+            itemVar = 'item';
+            indexVar = 'index';
+          }
+
+          const array = evaluate(arrayExpr, contextData);
+          if (!Array.isArray(array) && typeof array !== 'object') return '';
+
+          if (typeof array === 'object' && !Array.isArray(array)) {
+            return Object.entries(array)
+              .map(([key, value], idx) => {
+                const loopContext = {
+                  ...contextData,
+                  ...this.viewHelpers,
+                  [itemVar]: value,
+                  [indexVar]: idx,
+                  key: key,
+                  value: value,
+                  this: value,
+                  isFirst: idx === 0,
+                  isLast: idx === Object.keys(array).length - 1
+                };
+
+                let processed = processConditionals(innerTemplate, loopContext);
+                processed = processed.replace(/@\{([^}]+)\}/g, (_, expr) => {
+                  const result = evaluate(expr, loopContext);
+                  if (result === undefined) return '';
+                  if (typeof result === 'object') return JSON.stringify(result);
+                  return result;
+                });
+                // Process function calls inside loops
+                processed = processFunctionCalls(processed, loopContext);
+                // Also process @variable syntax inside loops
+                processed = processed.replace(/@([a-zA-Z_$][a-zA-Z0-9_$]*(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)*)/g, (_, varPath) => {
+                  const parts = varPath.split('.');
+                  let value = loopContext;
+
+                  for (const part of parts) {
+                    if (value === null || value === undefined) break;
+                    value = value[part];
+                  }
+
+                  if (value === undefined) return `@${varPath}`;
+                  if (typeof value === 'object') return JSON.stringify(value);
+                  return value;
+                });
+
+                return processed;
+              })
+              .join('');
+          }
+
+          return array
+            .map((item, idx) => {
+              const loopContext = {
+                ...contextData,
                 ...this.viewHelpers,
-                [itemVar]: value,
+                [itemVar]: item,
                 [indexVar]: idx,
-                key: key,
-                value: value,
-                this: value,
+                this: item,
                 isFirst: idx === 0,
-                isLast: idx === Object.keys(array).length - 1
+                isLast: idx === array.length - 1
               };
 
-              let processed = processConditionals(innerTemplate, context);
+              let processed = processConditionals(innerTemplate, loopContext);
               processed = processed.replace(/@\{([^}]+)\}/g, (_, expr) => {
-                const result = evaluate(expr, context);
+                if (expr.startsWith('this[') && expr.endsWith(']')) {
+                  const indexExpr = expr.substring(5, expr.length - 1);
+                  const index = evaluate(indexExpr, loopContext);
+                  if (typeof index === 'number' && array[index] !== undefined) {
+                    return array[index];
+                  }
+                  return '';
+                }
+
+                const result = evaluate(expr, loopContext);
                 if (result === undefined) return '';
                 if (typeof result === 'object') return JSON.stringify(result);
                 return result;
               });
+              // Process function calls inside loops
+              processed = processFunctionCalls(processed, loopContext);
               // Also process @variable syntax inside loops
-              processed = processed.replace(/@([a-zA-Z_$][a-zA-Z0-9_$]*)/g, (_, varName) => {
-                const result = evaluate(varName, context);
-                if (result === undefined) return `@${varName}`;
-                if (typeof result === 'object') return JSON.stringify(result);
-                return result;
+              processed = processed.replace(/@([a-zA-Z_$][a-zA-Z0-9_$]*(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)*)/g, (_, varPath) => {
+                const parts = varPath.split('.');
+                let value = loopContext;
+
+                for (const part of parts) {
+                  if (value === null || value === undefined) break;
+                  value = value[part];
+                }
+
+                if (value === undefined) return `@${varPath}`;
+                if (typeof value === 'object') return JSON.stringify(value);
+                return value;
               });
 
               return processed;
             })
             .join('');
         }
+      );
 
-        return array
-          .map((item, idx) => {
-            const context = {
-              ...data,
-              ...this.viewHelpers,
-              [itemVar]: item,
-              [indexVar]: idx,
-              this: item,
-              isFirst: idx === 0,
-              isLast: idx === array.length - 1
-            };
-
-            let processed = processConditionals(innerTemplate, context);
-            processed = processed.replace(/@\{([^}]+)\}/g, (_, expr) => {
-              if (expr.startsWith('this[') && expr.endsWith(']')) {
-                const indexExpr = expr.substring(5, expr.length - 1);
-                const index = evaluate(indexExpr, context);
-                if (typeof index === 'number' && array[index] !== undefined) {
-                  return array[index];
-                }
-                return '';
-              }
-              
-              const result = evaluate(expr, context);
-              if (result === undefined) return '';
-              if (typeof result === 'object') return JSON.stringify(result);
-              return result;
-            });
-            // Also process @variable syntax inside loops
-            processed = processed.replace(/@([a-zA-Z_$][a-zA-Z0-9_$]*)/g, (_, varName) => {
-              const result = evaluate(varName, context);
-              if (result === undefined) return `@${varName}`;
-              if (typeof result === 'object') return JSON.stringify(result);
-              return result;
-            });
-
-            return processed;
-          })
-          .join('');
-      }
-    );
-
-    content = processConditionals(content, {
-      ...data,
-      ...this.viewHelpers
-    });
-
-    // Process inline expressions @{...}
-    content = content.replace(/@\{([^}]+)\}/g, (_, expr) => {
-      if (expr.startsWith('this[') && expr.endsWith(']')) {
-        const indexExpr = expr.substring(5, expr.length - 1);
-        const idx = evaluate(indexExpr, data);
-        if (Array.isArray(data) && typeof idx === 'number' && data[idx] !== undefined) {
-          return data[idx];
-        }
-        return '';
-      }
-      
-      const result = evaluate(expr, {
-        ...data,
+      processedContent = processConditionals(processedContent, {
+        ...contextData,
         ...this.viewHelpers
       });
-      if (result === undefined) return '';
-      if (typeof result === 'object') return JSON.stringify(result);
-      return result;
-    });
 
-    // Process @variable syntax one more time for any remaining variables
-    content = content.replace(/@([a-zA-Z_$][a-zA-Z0-9_$]*)/g, (_, varName) => {
-      const value = evaluate(varName, data);
-      if (value === undefined) return `@${varName}`;
-      if (typeof value === 'object') return JSON.stringify(value);
-      return value;
-    });
+      // Process inline expressions @{...}
+      processedContent = processedContent.replace(/@\{([^}]+)\}/g, (_, expr) => {
+        if (expr.startsWith('this[') && expr.endsWith(']')) {
+          const indexExpr = expr.substring(5, expr.length - 1);
+          const idx = evaluate(indexExpr, contextData);
+          if (Array.isArray(contextData) && typeof idx === 'number' && contextData[idx] !== undefined) {
+            return contextData[idx];
+          }
+          return '';
+        }
 
-    resolve(content);
+        const result = evaluate(expr, {
+          ...contextData,
+          ...this.viewHelpers
+        });
+        if (result === undefined) return '';
+        if (typeof result === 'object') return JSON.stringify(result);
+        return result;
+      });
+
+      // Process @variable syntax one more time for any remaining variables
+      processedContent = processedContent.replace(/@([a-zA-Z_$][a-zA-Z0-9_$]*(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)*)/g, (_, varPath) => {
+        // Skip if this looks like it was part of a function call that was already processed
+        if (processedContent.indexOf(`@${varPath}(`) > -1) {
+          return `@${varPath}`;
+        }
+
+        const parts = varPath.split('.');
+        let value = contextData;
+
+        for (const part of parts) {
+          if (value === null || value === undefined) break;
+          value = value[part];
+        }
+
+        if (value === undefined) {
+          // Check if it's a helper function without parentheses
+          if (this.viewHelpers[varPath]) {
+            return `@${varPath}`; // Return original for helper functions without ()
+          }
+          return `@${varPath}`; // Return original if not found
+        }
+
+        if (typeof value === 'object') return JSON.stringify(value);
+        return value;
+      });
+
+      return processedContent;
+    };
+
+    const renderWithIncludes = async () => {
+      try {
+        // Process includes first
+        content = await processIncludes(content, data);
+
+        // Process the rest of the template
+        const finalContent = await this._processTemplateContent(content, data);
+        resolve(finalContent);
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    renderWithIncludes();
   }
 
   _renderThirdParty(file, data, resolve, reject) {

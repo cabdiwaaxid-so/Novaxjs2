@@ -201,7 +201,7 @@ class novax {
       if (matchedRoute) {
         try {
           const content = matchedRoute.handler(req, res);
-          
+
           if (content instanceof Promise) {
             content.then(result => {
               if (typeof result === 'string') {
@@ -861,9 +861,7 @@ _registerRouterObject(routerObject) {
         // Not valid JSON, continue with minification
       }
     }
-    if (content.includes('<?xml') ||
-    (content.includes('<svg') && content.includes('</svg>')) ||
-    content.trim().startsWith('<![CDATA[')) {
+    if (content.includes('<?xml') || content.trim().startsWith('<![CDATA[')) {
       return content;
     }
 
@@ -911,6 +909,7 @@ _registerRouterObject(routerObject) {
 
   content = content
     .replace(/<!--(?!\[if|\#)[\s\S]*?-->/g, '');
+
 
   content = content
     .replace(/>\s+</g, '><')
@@ -968,15 +967,20 @@ minifyCSS(css) {
  */
 minifyJs(js) {
   if (typeof js !== 'string') return js;
+
+  // Preserve strings, regex patterns, and comments that might be important
   const preserved = [];
+
+  // First preserve template literals and complex strings
   js = js
-    .replace(/(["'`])(?:\\.|(?!\1).)*?\1|\/(?![*\/])(?:\\.|[^\/\r\n])+\/[gimuy]*/g, (match) => {
+    .replace(/(`)(?:\\.|(?!\1).)*?\1|(["'])(?:\\.|(?!\2).)*?\2/g, (match) => {
       preserved.push(match);
       return `__PRESERVED_${preserved.length - 1}__`;
-    });
-  js = js
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/.*$/gm, '');
+    })
+    .replace(/\/\*[\s\S]*?\*\//g, '') // Remove block comments
+    .replace(/\/\/.*$/gm, ''); // Remove line comments
+
+  // Now minify the remaining code
   js = js
     .replace(/\s*([=+\-*\/%&|^~!<>?:])\s*/g, '$1')
     .replace(/\s*([()\[\]{}])\s*/g, '$1')
@@ -984,9 +988,12 @@ minifyJs(js) {
     .replace(/;\s*;/g, ';')
     .replace(/;}/g, '}')
     .trim();
+
+  // Restore preserved content
   js = js.replace(/__PRESERVED_(\d+)__/g, (_, id) => {
     return preserved[Number(id)] || '';
   });
+
   return js;
 }
 
