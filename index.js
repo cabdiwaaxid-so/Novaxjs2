@@ -852,27 +852,49 @@ _registerRouterObject(routerObject) {
     return this.template.render(file, data);
   }
   minifyContent(content) {
-    if (!this.minifier || typeof content !== 'string') return content;
-    if (content.trim().startsWith('{') && content.trim().endsWith('}')) {
-      try {
-        JSON.parse(content);
-        return content;
-      } catch (e) {
-        // Not valid JSON, continue with minification
-      }
-    }
-    if (content.includes('<?xml') || content.trim().startsWith('<![CDATA[')) {
+  if (!this.minifier || typeof content !== 'string') return content;
+  
+  // Check if this is JSON or XML content that shouldn't be minified
+  if (content.trim().startsWith('{') && content.trim().endsWith('}')) {
+    try {
+      JSON.parse(content);
       return content;
+    } catch (e) {
+      // Not valid JSON, continue with minification
     }
+  }
+  if (content.includes('<?xml') || content.trim().startsWith('<![CDATA[')) {
+    return content;
+  }
 
   const preserved = {
     strings: [],
     comments: [],
     scripts: [],
     styles: [],
-    templates: []
+    templates: [],
+    skipBlocks: []  // Add this for skip blocks
   };
 
+  // FIRST: Preserve "novax:skip-start" and "novax:skip-end" blocks
+  content = content.replace(
+    /<!--\s*novax:skip-start\s*-->([\s\S]*?)<!--\s*novax:skip-end\s*-->/gi,
+    (match, skipContent) => {
+      preserved.skipBlocks.push(skipContent);
+      return `__PRESERVED_SKIP_BLOCK_${preserved.skipBlocks.length - 1}__`;
+    }
+  );
+
+  // Also handle single line skip: <!-- novax:skip -->
+  content = content.replace(
+    /<!--\s*novax:skip\s*-->([\s\S]*?)<!--\s*novax:unskip\s*-->/gi,
+    (match, skipContent) => {
+      preserved.skipBlocks.push(skipContent);
+      return `__PRESERVED_SKIP_SINGLE_${preserved.skipBlocks.length - 1}__`;
+    }
+  );
+
+  // Preserve existing content types (scripts, styles, etc.)
   content = content
     .replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, (match, scriptContent) => {
       const minifiedScript = this.minifyJs(scriptContent);
@@ -907,10 +929,11 @@ _registerRouterObject(routerObject) {
       return `__PRESERVED_STRING_${preserved.strings.length - 1}__`;
     });
 
+  // Remove regular comments (but not our skip markers)
   content = content
-    .replace(/<!--(?!\[if|\#)[\s\S]*?-->/g, '');
+    .replace(/<!--(?!\[if|\#|novax:)[\s\S]*?-->/g, '');
 
-
+  // Apply minification
   content = content
     .replace(/>\s+</g, '><')
     .replace(/\s+(\/?)>/g, '$1>')
@@ -918,7 +941,14 @@ _registerRouterObject(routerObject) {
     .replace(/\s+/g, ' ')
     .trim();
 
+  // Restore all preserved content
   content = content
+    .replace(/__PRESERVED_SKIP_BLOCK_(\d+)__/g, (_, id) => {
+      return preserved.skipBlocks[Number(id)] || '';
+    })
+    .replace(/__PRESERVED_SKIP_SINGLE_(\d+)__/g, (_, id) => {
+      return preserved.skipBlocks[Number(id)] || '';
+    })
     .replace(/__PRESERVED_SCRIPT_(\d+)__/g, (_, id) => {
       return preserved.scripts[Number(id)] || '';
     })
@@ -951,13 +981,44 @@ _registerRouterObject(routerObject) {
  */
 minifyCSS(css) {
   if (typeof css !== 'string') return css;
-  return css
-    .replace(/\/\*[\s\S]*?\*\//g, '')
+  
+  // Check for novax:skip markers
+  const skipBlocks = [];
+  
+  css = css.replace(
+    /\/\*\s*novax:skip-start\s*\*\/[\s\S]*?\/\*\s*novax:skip-end\s*\*\//gi,
+    (match) => {
+      skipBlocks.push(match);
+      return `__CSS_SKIP_BLOCK_${skipBlocks.length - 1}__`;
+    }
+  );
+  
+  // Also handle single line skip
+  css = css.replace(
+    /\/\*\s*novax:skip\s*\*\/[\s\S]*?\/\*\s*novax:unskip\s*\*\//gi,
+    (match) => {
+      skipBlocks.push(match);
+      return `__CSS_SKIP_SINGLE_${skipBlocks.length - 1}__`;
+    }
+  );
+  
+  // Minify everything else
+  css = css
+    .replace(/\/\*[\s\S]*?\*\//g, '')  // Remove other comments
     .replace(/\s*([{}:;,])\s*/g, '$1')
     .replace(/;}/g, '}')
     .replace(/\s+/g, ' ')
     .replace(/\s*([+\-*\/=<>])\s*/g, '$1')
     .trim();
+  
+  // Restore skip blocks
+  css = css.replace(/__CSS_SKIP_BLOCK_(\d+)__/g, (_, id) => {
+    return skipBlocks[Number(id)] || '';
+  }).replace(/__CSS_SKIP_SINGLE_(\d+)__/g, (_, id) => {
+    return skipBlocks[Number(id)] || '';
+  });
+  
+  return css;
 }
 
 /**
@@ -968,10 +1029,28 @@ minifyCSS(css) {
 minifyJs(js) {
   if (typeof js !== 'string') return js;
 
-  // Preserve strings, regex patterns, and comments that might be important
   const preserved = [];
+  const skipBlocks = [];
 
-  // First preserve template literals and complex strings
+  // First preserve skip blocks
+  js = js.replace(
+    /\/\*\s*novax:skip-start\s*\*\/[\s\S]*?\/\*\s*novax:skip-end\s*\*\//gi,
+    (match) => {
+      skipBlocks.push(match);
+      return `__JS_SKIP_BLOCK_${skipBlocks.length - 1}__`;
+    }
+  );
+  
+  // Also handle single line skip
+  js = js.replace(
+    /\/\*\s*novax:skip\s*\*\/[\s\S]*?\/\*\s*novax:unskip\s*\*\//gi,
+    (match) => {
+      skipBlocks.push(match);
+      return `__JS_SKIP_SINGLE_${skipBlocks.length - 1}__`;
+    }
+  );
+
+  // Then preserve strings, regex patterns, and comments that might be important
   js = js
     .replace(/(`)(?:\\.|(?!\1).)*?\1|(["'])(?:\\.|(?!\2).)*?\2/g, (match) => {
       preserved.push(match);
@@ -990,9 +1069,16 @@ minifyJs(js) {
     .trim();
 
   // Restore preserved content
-  js = js.replace(/__PRESERVED_(\d+)__/g, (_, id) => {
-    return preserved[Number(id)] || '';
-  });
+  js = js
+    .replace(/__JS_SKIP_BLOCK_(\d+)__/g, (_, id) => {
+      return skipBlocks[Number(id)] || '';
+    })
+    .replace(/__JS_SKIP_SINGLE_(\d+)__/g, (_, id) => {
+      return skipBlocks[Number(id)] || '';
+    })
+    .replace(/__PRESERVED_(\d+)__/g, (_, id) => {
+      return preserved[Number(id)] || '';
+    });
 
   return js;
 }

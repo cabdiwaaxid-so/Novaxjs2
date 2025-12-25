@@ -1,4 +1,4 @@
-# NovaxJS - Modern Web Framework for Node.js (v9.3.4)
+# NovaxJS - Modern Web Framework for Node.js (v9.4.1)
 
 ![NovaxJS Logo](https://www.novaxjs2.site/logo.png)
 
@@ -31,15 +31,13 @@ NovaxJS is a lightweight, high-performance web framework for Node.js designed fo
 - **View Helpers** - Register custom helpers for templates
 - **Router Modularization** - Use external router modules with `useRouter()` method
 
-## 🔄 What's New in v9.3.4
+## 🔄 What's New in v9.4.1
 
-### Template Engine & Rendering
-- **Enhanced Templating System**: Completely refactored template engine with advanced features
-- **File Includes**: New `@include('filename.html')` and `@include('filename.html', {data})` syntax
-- **Destructuring Support**: Object and array destructuring in `@var` declarations
-- **Function Calls**: Direct function calls in templates with `@functionName(args)`
-- **Advanced Variable Handling**: Improved dot notation support for object properties
-- **Recursive Processing**: Support for nested includes and complex template structures
+ ### Smart Minification
+- **Selective Minification**: Skip minification for specific code blocks using `<!-- novax:skip -->` markers
+- **Multi-format Support**: Skip markers work for HTML, CSS, and JavaScript
+- **Preserved Formatting**: Code within skip blocks maintains original formatting and whitespace
+- **Flexible Skip Syntax**: Both block-level and inline skip markers available
 
 ## 📦 Installation
 
@@ -76,6 +74,108 @@ app.at(3000, () => {
 ```
 
 ## 🆕 New API Highlights
+
+### Smart Minification with skip markers
+
+
+**Skip minification for specific HTML blocks:**
+
+```html
+<!-- This will be minified normally -->
+<div class="normal-content">
+  <p>This content will be minified.</p>
+</div>
+
+<!-- novax:skip-start -->
+<!-- This entire block will NOT be minified -->
+<div class="preformatted">
+  <!-- Comments remain intact -->
+  <pre>
+    This preformatted text
+    keeps its original spacing
+    and line breaks exactly as written.
+  </pre>
+  
+  <code>
+    // JavaScript code example
+    function example() {
+      const x = 10;
+      const y = 20;
+      return x + y;
+    }
+  </code>
+</div>
+<!-- novax:skip-end -->
+
+<!-- This will be minified again -->
+<p>Back to normal minification</p>
+```
+
+**Inline skip markers:**
+
+```html
+<!-- novax:skip -->
+<!-- This section preserves formatting -->
+<div class="preserve-me">
+    <p>Multi-line
+       content with
+       intentional spacing.</p>
+</div>
+<!-- novax:unskip -->
+```
+
+**CSS skip blocks:**
+
+```css
+/* This CSS will be minified */
+body {
+  margin: 0;
+  padding: 0;
+}
+
+/* novax:skip-start */
+/* This CSS block won't be minified */
+/* Keep important formatting for readability */
+.header {
+    background: linear-gradient(to right, #ff0000, #00ff00);
+    /* Complex calculations that should remain readable */
+    padding: calc(20px + 10%);
+    margin: 10px 20px 30px 40px;
+}
+/* novax:skip-end */
+
+/* Back to normal minification */
+.footer {
+  background: #000;
+}
+```
+
+**JavaScript skip blocks:**
+
+```javascript
+// This will be minified
+function minifiedFunc(x) {
+  return x * 2;
+}
+
+/* novax:skip-start */
+// This code won't be minified
+// Keep complex algorithms readable
+function complexCalculation(a, b, c) {
+    // Multi-step calculation
+    const step1 = a * b;
+    const step2 = step1 / c;
+    const step3 = Math.sqrt(step2);
+    
+    // Important comments preserved
+    return step3;
+}
+/* novax:skip-end */
+
+// Back to minification
+const anotherFunc = y => y + 1;
+```
+
 
 ### Enhanced Template Syntax
 
@@ -1295,4 +1395,4 @@ ISC License
 
 ---
 
-This documentation covers all features and capabilities of NovaxJS v9.3.4, including both existing functionality and new enhancements. For more examples and advanced usage patterns, please refer to the official documentation website.
+This documentation covers all features and capabilities of NovaxJS v9.4.1, including both existing functionality and new enhancements. For more examples and advanced usage patterns, please refer to the official documentation website.
