@@ -1,4 +1,4 @@
-# NovaxJS - Modern Web Framework for Node.js (v9.4.1)
+# NovaxJS - Modern Web Framework for Node.js (v9.4.2)
 
 ![NovaxJS Logo](https://www.novaxjs2.site/logo.png)
 
@@ -17,7 +17,7 @@ NovaxJS is a lightweight, high-performance web framework for Node.js designed fo
 - **Advanced File Handling** - Robust file uploads with configurable limits and validation (maxSize in MB)
 - **Middleware Pipeline** - Flexible middleware architecture with error handling (`useMiddleware`, `useErrorMiddleware`)
 - **Static File Serving** - Efficient static file delivery with automatic MIME type detection and static path prefix stripping
-- **CORS Support** - Configurable CORS policies with preflight handling (`cors` method)
+- **CORS Support** - Configurable CORS policies with preflight handling, now with **dynamic origin checking** (`cors` method)
 - **Plugin System** - Extensible architecture for adding framework features
 - **Comprehensive Error Handling** - Custom error pages and error middleware stack (`on(statusCode, handler)` for 400–599)
 - **Request Parsing** - Built-in support for JSON, form-data, and urlencoded bodies
@@ -31,9 +31,15 @@ NovaxJS is a lightweight, high-performance web framework for Node.js designed fo
 - **View Helpers** - Register custom helpers for templates
 - **Router Modularization** - Use external router modules with `useRouter()` method
 
-## 🔄 What's New in v9.4.1
+## 🔄 What's New in v9.4.2
 
- ### Smart Minification
+### 🆕 Dynamic CORS Origin Checking
+- **Function-Based Origins**: Now you can pass a function to `app.cors()` to dynamically determine allowed origins
+- **Flexible Logic**: Make CORS decisions based on origin, request headers, or any custom logic
+- **Request Context**: The callback function receives both the origin and the full request object
+- **Backward Compatible**: All existing static origin configurations continue to work
+
+### 🔧 Smart Minification
 - **Selective Minification**: Skip minification for specific code blocks using `<!-- novax:skip -->` markers
 - **Multi-format Support**: Skip markers work for HTML, CSS, and JavaScript
 - **Preserved Formatting**: Code within skip blocks maintains original formatting and whitespace
@@ -75,11 +81,56 @@ app.at(3000, () => {
 
 ## 🆕 New API Highlights
 
+### Dynamic CORS with Function-Based Origins
+
+**Dynamic origin checking with function:**
+```javascript
+app.cors({
+  origins(origin, req) {
+    if (!origin) return false;
+    
+    // Allow specific domains
+    if (origin === "https://whoappsomali.site") return true;
+    
+    // Allow all subdomains of a domain
+    if (origin.endsWith(".small-pencil.website")) return true;
+    
+    // Allow based on some request property
+    if (req.headers['x-custom-header'] === 'special') return true;
+    
+    // Allow localhost in development
+    if (process.env.NODE_ENV === 'development' && origin.includes('localhost')) {
+      return true;
+    }
+    
+    return false;
+  },
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  headers: ["Content-Type", "Authorization"],
+  credentials: true
+});
+```
+
+**Short form with just a function:**
+```javascript
+app.cors((origin, req) => {
+  // Return true to allow, false to deny
+  return origin === "https://allowed-domain.com";
+});
+```
+
+**Traditional static origins (still supported):**
+```javascript
+app.cors({
+  origins: ['https://example.com', 'https://api.example.com'],
+  methods: ['GET', 'POST'],
+  credentials: true
+});
+```
+
 ### Smart Minification with skip markers
 
-
 **Skip minification for specific HTML blocks:**
-
 ```html
 <!-- This will be minified normally -->
 <div class="normal-content">
@@ -112,7 +163,6 @@ app.at(3000, () => {
 ```
 
 **Inline skip markers:**
-
 ```html
 <!-- novax:skip -->
 <!-- This section preserves formatting -->
@@ -125,7 +175,6 @@ app.at(3000, () => {
 ```
 
 **CSS skip blocks:**
-
 ```css
 /* This CSS will be minified */
 body {
@@ -151,7 +200,6 @@ body {
 ```
 
 **JavaScript skip blocks:**
-
 ```javascript
 // This will be minified
 function minifiedFunc(x) {
@@ -326,17 +374,17 @@ app.post('/products', (req, res) => {
 
 // PUT route
 app.put('/products/:id', (req, res) => {
-  res.send(`Updating product ${req.params.id}`);
+  res.send(`Updating product \${req.params.id}`);
 });
 
 // DELETE route
 app.delete('/products/:id', (req, res) => {
-  res.send(`Deleting product ${req.params.id}`);
+  res.send(`Deleting product \${req.params.id}`);
 });
 
 // PATCH route
 app.patch('/products/:id', (req, res) => {
-  res.send(`Partially updating product ${req.params.id}`);
+  res.send(`Partially updating product \${req.params.id}`);
 });
 ```
 
@@ -344,7 +392,7 @@ app.patch('/products/:id', (req, res) => {
 ```javascript
 // Single parameter (named regex group)
 app.get('/users/:userId', (req, res) => {
-  res.send(`User ID: ${req.params.userId}`);
+  res.send(`User ID: \${req.params.userId}`);
 });
 
 // Multiple parameters
@@ -385,7 +433,7 @@ const authenticate = (req, res, next) => {
 
 // Logging middleware
 const logger = (req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  console.log(`[\${new Date().toISOString()}] \${req.method} \${req.url}`);
   next();
 };
 
@@ -459,7 +507,7 @@ app.post('/upload', (req, res) => {
     originalName: fileInfo.name,
     savedName: fileInfo.newname,
     size: fileInfo.size,
-    url: `/uploads/${fileInfo.newname}`
+    url: `/uploads/\${fileInfo.newname}`
   });
 });
 
@@ -471,7 +519,7 @@ app.post('/profile', (req, res) => {
   // Process data
   res.json({
     profile: { name, bio },
-    avatarUrl: `/uploads/${avatar.newname}`
+    avatarUrl: `/uploads/\${avatar.newname}`
   });
 });
 ```
@@ -602,7 +650,7 @@ app.get('/dashboard', (req, res) => {
   }
 
   // Use cookie values
-  res.send(`Preferences: ${preferences}`);
+  res.send(`Preferences: \${preferences}`);
 });
 ```
 
@@ -785,7 +833,7 @@ app.post('/gallery', (req, res) => {
 
   const results = files.map(file => ({
     name: file.name,
-    url: `/uploads/${file.newname}`,
+    url: `/uploads/\${file.newname}`,
     size: file.size
   }));
 
@@ -800,7 +848,7 @@ app.post('/profile', (req, res) => {
   // Process data
   res.json({
     profile: { username, bio },
-    avatarUrl: `/uploads/${avatar.newname}`
+    avatarUrl: `/uploads/\${avatar.newname}`
   });
 });
 ```
@@ -947,22 +995,22 @@ module.exports = function(data) {
   return someAsyncOperation().then(result => {
     return `
       <div class="profile">
-        <h1>${user.name}</h1>
-        <img src="${user.avatar}" alt="Profile picture">
+        <h1>\${user.name}</h1>
+        <img src="\${user.avatar}" alt="Profile picture">
 
-        ${user.isAdmin ? '<div class="admin-badge">Administrator</div>' : ''}
+        \${user.isAdmin ? '<div class="admin-badge">Administrator</div>' : ''}
 
         <ul class="friends">
-          ${user.friends.map(friend => `
+          \${user.friends.map(friend => `
             <li>
-              ${friend.name}
-              ${friend.isClose ? '⭐' : ''}
+              \${friend.name}
+              \${friend.isClose ? '⭐' : ''}
             </li>
           `).join('')}
         </ul>
 
         <div class="async-result">
-          ${result}
+          \${result}
         </div>
       </div>
     `;
@@ -1133,10 +1181,10 @@ app.on(404, (err, req, res) => `
   <body>
     <h1>404 - Not Found</h1>
     <p>The requested page could not be found.</p>
-    ${process.env.NODE_ENV === 'development' ? `
+    \${process.env.NODE_ENV === 'development' ? `
       <div class="details">
-        <p><strong>URL:</strong> ${req.url}</p>
-        <p><strong>Method:</strong> ${req.method}</p>
+        <p><strong>URL:</strong> \${req.url}</p>
+        <p><strong>Method:</strong> \${req.method}</p>
       </div>
     ` : ''}
   </body>
@@ -1146,9 +1194,9 @@ app.on(404, (err, req, res) => `
 // 500 Server Error
 app.on(500, (err) => `
   <h1>Server Error</h1>
-  <p>${err.message}</p>
-  ${process.env.NODE_ENV === 'development' ?
-    `<pre>${err.stack}</pre>` : ''}
+  <p>\${err.message}</p>
+  \${process.env.NODE_ENV === 'development' ?
+    `<pre>\${err.stack}</pre>` : ''}
 `);
 
 // Custom business error
@@ -1189,9 +1237,9 @@ app.useErrorMiddleware((err, req, res, next) => {
     } else {
       // Fallback to default
       res.send(`
-        <h1>${err.statusCode || 500} Error</h1>
-        <p>${err.message}</p>
-        ${process.env.NODE_ENV === 'development' ? `<pre>${err.stack}</pre>` : ''}
+        <h1>\${err.statusCode || 500} Error</h1>
+        <p>\${err.message}</p>
+        \${process.env.NODE_ENV === 'development' ? `<pre>\${err.stack}</pre>` : ''}
       `);
     }
   } else if (acceptsJson) {
@@ -1235,7 +1283,7 @@ module.exports = function(context, options = {}) {
     const start = Date.now();
     res.on('finish', () => {
       const duration = Date.now() - start;
-      const message = `${req.method} ${req.url} ${res.statusCode} ${duration}ms`;
+      const message = `\${req.method} \${req.url} \${res.statusCode} \${duration}ms`;
       log(message, 'info');
     });
     next();
@@ -1248,7 +1296,7 @@ module.exports = function(context, options = {}) {
 
     if (levels.indexOf(level) <= levels.indexOf(currentLevel)) {
       const timestamp = new Date().toISOString();
-      console[level](`[${timestamp}] ${message}`);
+      console[level](`[\${timestamp}] \${message}`);
     }
   });
 
@@ -1395,4 +1443,4 @@ ISC License
 
 ---
 
-This documentation covers all features and capabilities of NovaxJS v9.4.1, including both existing functionality and new enhancements. For more examples and advanced usage patterns, please refer to the official documentation website.
+This documentation covers all features and capabilities of NovaxJS v9.4.2, including both existing functionality and new enhancements. For more examples and advanced usage patterns, please refer to the official documentation website.

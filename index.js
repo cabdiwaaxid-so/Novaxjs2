@@ -694,30 +694,78 @@ _registerRouterObject(routerObject) {
 }
 
   setCorsHeaders(req, res, options) {
-    if (options.origins.includes('*')) {
-      res.setHeader("Access-Control-Allow-Origin", '*');
-    } else {
+    let allowOrigin = null;
+    
+    // Handle dynamic origin checking
+    if (options.dynamicOriginCheck) {
       const origin = req.headers.origin;
-      if (options.origins.includes(origin)) {
-        res.setHeader("Access-Control-Allow-Origin", origin);
+      if (origin) {
+        try {
+          const isAllowed = options.dynamicOriginCheck(origin, req);
+          if (isAllowed) {
+            res.setHeader("Access-Control-Allow-Origin", origin);
+            allowOrigin = origin;
+          }
+        } catch (err) {
+          console.error('Error in dynamic CORS origin check:', err);
+        }
+      }
+    } else if (options.origins) {
+      if (options.origins.includes('*')) {
+        res.setHeader("Access-Control-Allow-Origin", '*');
+        allowOrigin = '*';
+      } else {
+        const origin = req.headers.origin;
+        if (origin && options.origins.includes(origin)) {
+          res.setHeader("Access-Control-Allow-Origin", origin);
+          allowOrigin = origin;
+        }
       }
     }
-    res.setHeader("Access-Control-Allow-Methods", options.methods || "GET, POST, PUT, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", options.headers || "Content-Type, Authorization");
-    if (options.credentials) {
-      res.setHeader("Access-Control-Allow-Credentials", "true");
+    
+    // Only set other CORS headers if origin is allowed
+    if (allowOrigin !== null) {
+      res.setHeader("Access-Control-Allow-Methods", options.methods || "GET, POST, PUT, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", options.headers || "Content-Type, Authorization");
+      if (options.credentials) {
+        res.setHeader("Access-Control-Allow-Credentials", "true");
+      }
+      
+      // Add Vary header for caching when using dynamic origins
+      if (options.dynamicOriginCheck || (options.origins && !options.origins.includes('*'))) {
+        res.setHeader("Vary", "Origin");
+      }
     }
   }
 
   /** * Set CORS options
- * @param {Object} options - CORS options
- * @param {string[]} options.origins - Allowed origins (e.g., ['https://example.com', '*'])
- * @param {string} [options.methods] - Allowed methods (e.g., 'GET, POST, PUT, DELETE')
- * @param {string} [options.headers] - Allowed headers (e.g., 'Content-Type, Authorization')
- * @param {boolean} [options.credentials] - Whether to allow credentials (default: false)
- * */
+   * @param {Object|Function} options - CORS options or dynamic origin checker function
+   * @param {string[]|Function} options.origins - Allowed origins (array) or dynamic checker function
+   * @param {string} [options.methods] - Allowed methods (e.g., 'GET, POST, PUT, DELETE')
+   * @param {string} [options.headers] - Allowed headers (e.g., 'Content-Type, Authorization')
+   * @param {boolean} [options.credentials] - Whether to allow credentials (default: false)
+  **/
   cors(options) {
-    this.corsOptions = options;
+    // If options is a function, treat it as a dynamic origin checker
+    if (typeof options === 'function') {
+      this.corsOptions = {
+        dynamicOriginCheck: options,
+        methods: "GET, POST, PUT, DELETE, OPTIONS",
+        headers: "Content-Type, Authorization",
+        credentials: false
+      };
+    } else if (typeof options === 'object') {
+      // Check if origins is a function for dynamic checking
+      if (typeof options.origins === 'function') {
+        this.corsOptions = {
+          ...options,
+          dynamicOriginCheck: options.origins,
+          origins: undefined // Remove the function from origins property
+        };
+      } else {
+        this.corsOptions = options;
+      }
+    }
   }
 
   /**
