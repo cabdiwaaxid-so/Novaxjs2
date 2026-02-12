@@ -695,7 +695,7 @@ _registerRouterObject(routerObject) {
 
   setCorsHeaders(req, res, options) {
     let allowOrigin = null;
-    
+
     // Handle dynamic origin checking
     if (options.dynamicOriginCheck) {
       const origin = req.headers.origin;
@@ -722,7 +722,7 @@ _registerRouterObject(routerObject) {
         }
       }
     }
-    
+
     // Only set other CORS headers if origin is allowed
     if (allowOrigin !== null) {
       res.setHeader("Access-Control-Allow-Methods", options.methods || "GET, POST, PUT, DELETE, OPTIONS");
@@ -730,7 +730,7 @@ _registerRouterObject(routerObject) {
       if (options.credentials) {
         res.setHeader("Access-Control-Allow-Credentials", "true");
       }
-      
+
       // Add Vary header for caching when using dynamic origins
       if (options.dynamicOriginCheck || (options.origins && !options.origins.includes('*'))) {
         res.setHeader("Vary", "Origin");
@@ -849,6 +849,10 @@ _registerRouterObject(routerObject) {
     this.template.addHelpers(helpers);
   }
 
+  addFilter(name, fn) {
+    this.template.addFilter(name, fn);
+  }
+
   /** * Use a plugin to extend the application
    * @param {Function} plugin - The plugin function to use
    * @param {Object} [options] - Options for the plugin
@@ -901,7 +905,7 @@ _registerRouterObject(routerObject) {
   }
   minifyContent(content) {
   if (!this.minifier || typeof content !== 'string') return content;
-  
+
   // Check if this is JSON or XML content that shouldn't be minified
   if (content.trim().startsWith('{') && content.trim().endsWith('}')) {
     try {
@@ -1029,10 +1033,10 @@ _registerRouterObject(routerObject) {
  */
 minifyCSS(css) {
   if (typeof css !== 'string') return css;
-  
+
   // Check for novax:skip markers
   const skipBlocks = [];
-  
+
   css = css.replace(
     /\/\*\s*novax:skip-start\s*\*\/[\s\S]*?\/\*\s*novax:skip-end\s*\*\//gi,
     (match) => {
@@ -1040,7 +1044,7 @@ minifyCSS(css) {
       return `__CSS_SKIP_BLOCK_${skipBlocks.length - 1}__`;
     }
   );
-  
+
   // Also handle single line skip
   css = css.replace(
     /\/\*\s*novax:skip\s*\*\/[\s\S]*?\/\*\s*novax:unskip\s*\*\//gi,
@@ -1049,7 +1053,7 @@ minifyCSS(css) {
       return `__CSS_SKIP_SINGLE_${skipBlocks.length - 1}__`;
     }
   );
-  
+
   // Minify everything else
   css = css
     .replace(/\/\*[\s\S]*?\*\//g, '')  // Remove other comments
@@ -1058,14 +1062,14 @@ minifyCSS(css) {
     .replace(/\s+/g, ' ')
     .replace(/\s*([+\-*\/=<>])\s*/g, '$1')
     .trim();
-  
+
   // Restore skip blocks
   css = css.replace(/__CSS_SKIP_BLOCK_(\d+)__/g, (_, id) => {
     return skipBlocks[Number(id)] || '';
   }).replace(/__CSS_SKIP_SINGLE_(\d+)__/g, (_, id) => {
     return skipBlocks[Number(id)] || '';
   });
-  
+
   return css;
 }
 
@@ -1088,7 +1092,7 @@ minifyJs(js) {
       return `__JS_SKIP_BLOCK_${skipBlocks.length - 1}__`;
     }
   );
-  
+
   // Also handle single line skip
   js = js.replace(
     /\/\*\s*novax:skip\s*\*\/[\s\S]*?\/\*\s*novax:unskip\s*\*\//gi,

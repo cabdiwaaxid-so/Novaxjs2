@@ -1,6 +1,8 @@
 const fs = require("fs");
 const path = require("path");
 
+const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+
 class NovaxTemplating {
   constructor(app) {
     this.app = app;
@@ -10,6 +12,17 @@ class NovaxTemplating {
     this.viewHelpers = {};
     this.engineOptions = {};
     this.viewsType = 'html';
+    this.cache = new Map();
+    this.filters = {
+      upper: (s) => String(s).toUpperCase(),
+      lower: (s) => String(s).toLowerCase(),
+      json: (o) => JSON.stringify(o, null, 2),
+      first: (a) => Array.isArray(a) ? a[0] : a,
+      last: (a) => Array.isArray(a) ? a[a.length - 1] : a,
+      length: (v) => v ? v.length : 0,
+      reverse: (v) => Array.isArray(v) ? [...v].reverse() : String(v).split('').reverse().join(''),
+      capitalize: (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1)
+    };
   }
 
   setViewEngine(engine, options = {}) {
@@ -20,6 +33,8 @@ class NovaxTemplating {
     if (typeof options !== 'object' || Array.isArray(options)) {
       throw new Error('Options must be an object');
     }
+
+    this.cache.clear();
 
     if (typeof engine === 'string') {
       if (engine !== 'novax') {
@@ -81,7 +96,6 @@ class NovaxTemplating {
       } else if (typeof engine === 'function') {
         this.engine = engine;
       } else {
-        console.log(engine);
         throw new Error('Third-party view engine doesn\'t conform to supported conventions');
       }
 
@@ -94,7 +108,9 @@ class NovaxTemplating {
     this.viewHelpers = options.helpers || {};
     this.engineOptions = options.engineOptions || {};
     this.viewsType = options.viewsType || 'html';
-    fs.mkdirSync(this.viewsPath, { recursive: true });
+    if (!fs.existsSync(this.viewsPath)) {
+      fs.mkdirSync(this.viewsPath, { recursive: true });
+    }
   }
 
   addHelper(name, fn) {
@@ -105,6 +121,7 @@ class NovaxTemplating {
       throw new Error('Helper must be a function');
     }
     this.viewHelpers[name] = fn;
+    this.cache.clear();
   }
 
   addHelpers(helpers) {
@@ -116,44 +133,248 @@ class NovaxTemplating {
     }
   }
 
-  render(file, data = {}) {
-    return new Promise((resolve, reject) => {
-      if (!this.viewEngine) {
-        return reject(new Error('No view engine configured'));
-      }
-
-      if (this.viewEngine === 'novax') {
-        this._renderNovax(file, data, resolve, reject);
-      } else {
-        this._renderThirdParty(file, data, resolve, reject);
-      }
-    });
+  addFilter(name, fn) {
+    if (typeof name !== 'string' || !name) {
+      throw new Error('Filter name must be a non-empty string');
+    }
+    if (typeof fn !== 'function') {
+      throw new Error('Filter must be a function');
+    }
+    this.filters[name] = fn;
+    this.cache.clear();
   }
 
-  _renderNovax(file, data, resolve, reject) {
-    let filePath = null;
-    let isJsTemplate = this.viewsType === 'js';
-
-    if (isJsTemplate) {
-      filePath = path.join(this.viewsPath, `${file}.js`);
-    } else if (this.viewsType === 'html') {
-      filePath = path.join(this.viewsPath, `${file}.html`);
-    } else {
-      return reject(new Error('Novax views engine only supports js or html'));
+  async render(file, data = {}) {
+    if (!this.viewEngine) {
+      throw new Error('No view engine configured');
     }
 
-    fs.readFile(filePath, 'utf8', (err, content) => {
-      if (err) return reject(err);
-
-      if (isJsTemplate) {
-        this._renderJsTemplate(content, data, resolve, reject);
-      } else {
-        this._renderHtmlTemplate(content, data, resolve, reject);
-      }
-    });
+    if (this.viewEngine === 'novax') {
+      return this._renderNovax(file, data);
+    } else {
+      return new Promise((resolve, reject) => {
+        this._renderThirdParty(file, data, resolve, reject);
+      });
+    }
   }
 
-  _renderJsTemplate(content, data, resolve, reject) {
+  async _renderNovax(file, data) {
+    const isJsTemplate = this.viewsType === 'js';
+    const ext = isJsTemplate ? 'js' : 'html';
+    const fileName = file.endsWith('.' + ext) ? file : `${file}.${ext}`;
+    const filePath = path.join(this.viewsPath, fileName);
+
+    try {
+      if (isJsTemplate) {
+        const content = await fs.promises.readFile(filePath, 'utf8');
+        return this._renderJsTemplate(content, data);
+      } else {
+        const compiled = await this._getCompiled(filePath);
+        return await compiled(data, this.viewHelpers, this.filters, this._include.bind(this), this._renderLayout.bind(this), null);
+      }
+    } catch (err) {
+      throw err;
+    }
+  }
+
+  async _getCompiled(filePath) {
+    if (this.cache.has(filePath)) {
+      return this.cache.get(filePath);
+    }
+
+    const content = await fs.promises.readFile(filePath, 'utf8');
+    const code = this._generateCode(content);
+
+    const helperKeys = Object.keys(this.viewHelpers);
+    const helperDecls = helperKeys.length > 0 ? `const { ${helperKeys.join(', ')} } = helpers;` : '';
+
+    try {
+      const fn = new AsyncFunction('data', 'helpers', 'filters', 'include', 'renderLayout', '__parentSections', `
+        ${helperDecls}
+        let __output = "";
+        let __layout = null;
+        let __sections = __parentSections || {};
+        try {
+          with (data) {
+            ${code}
+          }
+        } catch (e) {
+          throw e;
+        }
+        if (__layout) {
+          return await renderLayout(__layout, data, __sections);
+        }
+        return __output;
+      `);
+      this.cache.set(filePath, fn);
+      return fn;
+    } catch (err) {
+      console.error('Error compiling template:', filePath);
+      throw err;
+    }
+  }
+
+  _generateCode(content) {
+    let code = '';
+    let stack = [];
+    const tokenRegex = /(@#[\s\S]*?#@|@\{[\s\S]*?\}|@if\s*\(.*?\)|@elif\s*\(.*?\)|@else|@each\s*\(.*?\)|@end|@var\s+.*?=|@include\s*\(.*?\)|@extends\s*\(.*?\)|@section\s*\(.*?\)|@yield\s*\(.*?\)|@[a-zA-Z_$][a-zA-Z0-9_$]*\s*\(.*?\)|@(?:[a-zA-Z_$][a-zA-Z0-9_$]*(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)*(?:\s*\|[a-zA-Z_$][a-zA-Z0-9_$]*(?:\(.*\))?)*))/g;
+
+    let lastIndex = 0;
+    let match;
+
+    while ((match = tokenRegex.exec(content)) !== null) {
+      const text = content.slice(lastIndex, match.index);
+      if (text) {
+        code += `__output += ${JSON.stringify(text)};\n`;
+      }
+
+      let token = match[0];
+
+      if (token.startsWith('@#')) {
+        // Comment, do nothing
+      } else if (token.startsWith('@if')) {
+        const condMatch = token.match(/@if\s*\((.*)\)/);
+        const cond = condMatch ? condMatch[1] : 'false';
+        code += `if (${cond}) {\n`;
+        stack.push('if');
+      } else if (token.startsWith('@elif')) {
+        const condMatch = token.match(/@elif\s*\((.*)\)/);
+        const cond = condMatch ? condMatch[1] : 'false';
+        code += `} else if (${cond}) {\n`;
+      } else if (token === '@else') {
+        code += `} else {\n`;
+      } else if (token.startsWith('@each')) {
+        const loopMatch = token.match(/@each\s*\((.*)\)/)[1];
+        let itemVar, indexVar, arrayExpr;
+
+        const inMatch = loopMatch.match(/^\s*([^,\s]+)(?:\s*,\s*([^,\s]+))?\s+in\s+(.+)\s*$/);
+        if (inMatch) {
+          itemVar = inMatch[1];
+          indexVar = inMatch[2] || '__index';
+          arrayExpr = inMatch[3];
+        } else {
+          itemVar = 'item';
+          indexVar = '__index';
+          arrayExpr = loopMatch;
+        }
+
+        const arrName = `__arr_${stack.length}`;
+        code += `const ${arrName} = ${arrayExpr};\n`;
+        code += `if (${arrName} && (Array.isArray(${arrName}) || typeof ${arrName} === 'object')) {\n`;
+        code += `  const __entries = Array.isArray(${arrName}) ? ${arrName}.map((v, i) => [i, v]) : Object.entries(${arrName});\n`;
+        code += `  for (let [__idx, __val] of __entries) {\n`;
+        code += `    let ${itemVar} = __val;\n`;
+        if (indexVar !== 'index') {
+          code += `    let ${indexVar} = __idx;\n`;
+        }
+        code += `    const index = __idx;\n`;
+        code += `    const isFirst = __idx === 0;\n`;
+        code += `    const isLast = __idx === __entries.length - 1;\n`;
+        stack.push('each');
+      } else if (token === '@end') {
+        const type = stack.pop();
+        if (type === 'each') {
+          code += `    }\n  }\n`;
+        } else if (type === 'if') {
+          code += `}\n`;
+        } else if (type === 'section') {
+          code += `  return __output;\n})();\n`;
+        }
+      } else if (token.startsWith('@var')) {
+        const rest = content.slice(match.index);
+        const varMatch = rest.match(/@var\s+({[^}]+}|\[[^\]]+\]|[a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*([\s\S]*?);/);
+        if (varMatch) {
+          code += `let ${varMatch[1]} = ${varMatch[2]};\n`;
+          tokenRegex.lastIndex = match.index + varMatch[0].length;
+        }
+      } else if (token.startsWith('@include')) {
+        const includeMatch = token.match(/@include\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*([\s\S]*?))?\s*\)/);
+        if (includeMatch) {
+          const file = includeMatch[1];
+          const includeData = includeMatch[2] || '{}';
+          code += `__output += await include(${JSON.stringify(file)}, { ...data, ...(${includeData}) });\n`;
+        }
+      } else if (token.startsWith('@extends')) {
+        const layoutMatch = token.match(/@extends\s*\(\s*['"]([^'"]+)['"]\s*\)/);
+        if (layoutMatch) {
+          code += `__layout = ${JSON.stringify(layoutMatch[1])};\n`;
+        }
+      } else if (token.startsWith('@section')) {
+        const sectionMatch = token.match(/@section\s*\(\s*['"]([^'"]+)['"]\s*\)/);
+        if (sectionMatch) {
+          const sectionName = sectionMatch[1];
+          code += `__sections[${JSON.stringify(sectionName)}] = (async () => {\n  let __output = "";\n`;
+          stack.push('section');
+        }
+      } else if (token.startsWith('@yield')) {
+        const yieldMatch = token.match(/@yield\s*\(\s*['"]([^'"]+)['"]\s*\)/);
+        if (yieldMatch) {
+          const sectionName = yieldMatch[1];
+          code += `__output += (__sections[${JSON.stringify(sectionName)}] ? await __sections[${JSON.stringify(sectionName)}] : "");\n`;
+        }
+      } else if (token.startsWith('@{')) {
+        const expr = token.slice(2, -1);
+        code += `__output += ${this._processExpression(expr)};\n`;
+      } else if (token.startsWith('@')) {
+        const varPath = token.slice(1);
+        code += `__output += ${this._processExpression(varPath)};\n`;
+      }
+
+      lastIndex = tokenRegex.lastIndex;
+    }
+
+    const remaining = content.slice(lastIndex);
+    if (remaining) {
+      code += `__output += ${JSON.stringify(remaining)};\n`;
+    }
+
+    return code;
+  }
+
+  _processExpression(expr) {
+    expr = expr.trim();
+
+    // Replace @variable with variable (e.g., @user.name -> user.name, @isFirst -> isFirst)
+    // but avoid matching email addresses or other non-variables
+    expr = expr.replace(/(^|[^a-zA-Z0-9_$])@([a-zA-Z_$][a-zA-Z0-9_$]*)/g, '$1$2');
+
+    const parts = expr.split('|').map(p => p.trim());
+    let result = parts[0];
+
+    for (let i = 1; i < parts.length; i++) {
+      const filterPart = parts[i];
+      let filterName = filterPart;
+      let args = '';
+      const argMatch = filterPart.match(/^([a-zA-Z_$][a-zA-Z0-9_$]*)\((.*)\)$/);
+      if (argMatch) {
+        filterName = argMatch[1];
+        args = ', ' + argMatch[2];
+      }
+      result = `(filters[${JSON.stringify(filterName)}] ? filters[${JSON.stringify(filterName)}](${result}${args}) : ${result})`;
+    }
+
+    return `(${result} !== undefined && ${result} !== null ? ${result} : "")`;
+  }
+
+  async _include(file, data) {
+    const isJsTemplate = this.viewsType === 'js';
+    const ext = isJsTemplate ? 'js' : 'html';
+    const fileName = file.endsWith('.' + ext) ? file : `${file}.${ext}`;
+    const filePath = path.join(this.viewsPath, fileName);
+    const compiled = await this._getCompiled(filePath);
+    return await compiled(data, this.viewHelpers, this.filters, this._include.bind(this), this._renderLayout.bind(this), null);
+  }
+
+  async _renderLayout(file, data, sections) {
+    const isJsTemplate = this.viewsType === 'js';
+    const ext = isJsTemplate ? 'js' : 'html';
+    const fileName = file.endsWith('.' + ext) ? file : `${file}.${ext}`;
+    const filePath = path.join(this.viewsPath, fileName);
+    const compiled = await this._getCompiled(filePath);
+    return await compiled(data, this.viewHelpers, this.filters, this._include.bind(this), this._renderLayout.bind(this), sections);
+  }
+
+  _renderJsTemplate(content, data) {
     try {
       const module = { exports: {} };
       const exports = module.exports;
@@ -183,462 +404,19 @@ class NovaxTemplating {
       const result = templateFn(module, exports, require, data, this.viewHelpers);
 
       if (typeof result === 'function') {
-        try {
-          const rendered = result.call(context, data);
-          if (rendered instanceof Promise) {
-            rendered.then(resolve).catch(reject);
-          } else {
-            resolve(rendered);
-          }
-        } catch (e) {
-          reject(e);
-        }
+        const rendered = result.call(context, data);
+        if (rendered instanceof Promise) return rendered;
+        return Promise.resolve(rendered);
       } else if (typeof result === 'string') {
-        resolve(result);
+        return Promise.resolve(result);
       } else if (result && typeof result.then === 'function') {
-        result.then(resolve).catch(reject);
+        return result;
       } else {
-        resolve(JSON.stringify(result));
+        return Promise.resolve(JSON.stringify(result));
       }
     } catch (e) {
-      reject(e);
+      return Promise.reject(e);
     }
-  }
-
-  _renderHtmlTemplate(content, data, resolve, reject) {
-    const evaluate = (expr, context) => {
-      try {
-        if (expr.trim() === 'this') return context;
-
-        const evalContext = {
-          ...context,
-          ...this.viewHelpers,
-          this: context,
-          JSON: JSON
-        };
-
-        // Check if this is a helper function call
-        if (/^[a-zA-Z_$][0-9a-zA-Z_$]*\(.*\)$/.test(expr)) {
-          const fnName = expr.split('(')[0];
-          if (this.viewHelpers[fnName]) {
-            const argsStr = expr.substring(fnName.length + 1, expr.length - 1);
-            const args = argsStr.split(',').map(arg => {
-              const trimmed = arg.trim();
-              return evaluate(trimmed, context);
-            });
-            return this.viewHelpers[fnName].apply(context, args);
-          }
-        }
-
-        if (expr.startsWith('this.')) {
-          const prop = expr.substring(5);
-          return evalContext[prop];
-        }
-
-        if (expr in evalContext) {
-          return evalContext[expr];
-        }
-
-        try {
-          return new Function('data', `with(data) { return ${expr} }`)(evalContext);
-        } catch {
-          return undefined;
-        }
-      } catch {
-        return undefined;
-      }
-    };
-
-    // Process @include directives first
-    const processIncludes = async (template, context) => {
-      const includeRegex = /@include\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*({[^}]*}))?\s*\)/g;
-      let result = template;
-      let match;
-
-      while ((match = includeRegex.exec(template)) !== null) {
-        const includeFile = match[1];
-        const includeDataStr = match[2] || '{}';
-        const includePath = path.join(this.viewsPath, includeFile);
-
-        try {
-          // Parse the include data object - handle both single and double quotes
-          let includeData = {};
-          if (includeDataStr !== '{}') {
-            try {
-              // Use a safer approach to evaluate the data object
-              const dataExpr = includeDataStr.trim();
-              if (dataExpr.startsWith('{') && dataExpr.endsWith('}')) {
-                // Create a function that returns the object with the current context
-                const dataFn = new Function('data', `with(data) { return ${dataExpr} }`);
-                includeData = dataFn({ ...context, ...this.viewHelpers });
-              } else {
-                // Try to evaluate as a variable name
-                includeData = evaluate(dataExpr, context);
-                if (typeof includeData !== 'object') {
-                  includeData = {};
-                }
-              }
-            } catch (e) {
-              console.warn(`Warning: Could not parse include data for ${includeFile}:`, includeDataStr);
-              includeData = {};
-            }
-          }
-
-          // Merge parent context with include-specific data
-          const mergedData = { ...context, ...includeData };
-
-          const includedContent = await fs.promises.readFile(includePath, 'utf8');
-
-          // Recursively process the included content with the merged data
-          const processedInclude = await this._processTemplateContent(includedContent, mergedData);
-          result = result.replace(match[0], processedInclude);
-        } catch (err) {
-          console.warn(`Warning: Could not include file ${includeFile}: ${err.message}`);
-          result = result.replace(match[0], '');
-        }
-      }
-
-      return result;
-    };
-
-    // Helper method to process template content recursively
-    this._processTemplateContent = async (templateContent, contextData) => {
-      // Process @var declarations with destructuring support
-      const processVarDeclarations = (content, context) => {
-        return content.replace(/@var\s+({[^}]+}|\[[^\]]+\]|[a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*([\s\S]*?);(?=\s*@|\s*$|\s*<)/g, (_, pattern, valueExpr) => {
-          const value = evaluate(valueExpr.trim(), context);
-
-          if (pattern.startsWith('{') && pattern.endsWith('}')) {
-            // Object destructuring: @var {prop1, prop2} = obj
-            const props = pattern.slice(1, -1).split(',').map(p => p.trim());
-            props.forEach(prop => {
-              if (prop.includes(':')) {
-                // Aliasing: @var {original: alias} = obj
-                const [original, alias] = prop.split(':').map(p => p.trim());
-                context[alias] = value[original];
-              } else {
-                context[prop] = value[prop];
-              }
-            });
-          } else if (pattern.startsWith('[') && pattern.endsWith(']')) {
-            // Array destructuring: @var [first, second] = arr
-            const vars = pattern.slice(1, -1).split(',').map(v => v.trim());
-            vars.forEach((varName, index) => {
-              if (varName) {
-                context[varName] = value[index];
-              }
-            });
-          } else {
-            // Simple variable assignment: @var name = value
-            context[pattern] = value;
-          }
-
-          return '';
-        });
-      };
-
-      let processedContent = processVarDeclarations(templateContent, contextData);
-
-      // Process function calls - check both helpers and variables that are functions
-      const processFunctionCalls = (content, context) => {
-        return content.replace(/@([a-zA-Z_$][a-zA-Z0-9_$]*)\(([^)]*)\)/g, (_, funcName, argsStr) => {
-          // Check if it's a helper function
-          if (this.viewHelpers[funcName]) {
-            const args = argsStr.split(',').map(arg => {
-              const trimmed = arg.trim();
-              // Remove quotes if it's a string literal
-              if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-                  (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-                return trimmed.slice(1, -1);
-              }
-              // Evaluate expression if it's a variable
-              const evaluated = evaluate(trimmed, context);
-              return evaluated !== undefined ? evaluated : trimmed;
-            });
-
-            try {
-              const result = this.viewHelpers[funcName].apply(context, args);
-              if (typeof result === 'object') return JSON.stringify(result);
-              return result;
-            } catch (e) {
-              console.warn(`Error executing helper ${funcName}:`, e);
-              return '';
-            }
-          }
-
-          // Check if it's a variable function defined with @var
-          const func = context[funcName];
-          if (typeof func === 'function') {
-            const args = argsStr.split(',').map(arg => {
-              const trimmed = arg.trim();
-              // Remove quotes if it's a string literal
-              if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-                  (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-                return trimmed.slice(1, -1);
-              }
-              // Evaluate expression if it's a variable
-              const evaluated = evaluate(trimmed, context);
-              return evaluated !== undefined ? evaluated : trimmed;
-            });
-
-            try {
-              const result = func.apply(context, args);
-              if (typeof result === 'object') return JSON.stringify(result);
-              return result;
-            } catch (e) {
-              console.warn(`Error executing variable function ${funcName}:`, e);
-              return '';
-            }
-          }
-
-          return `@${funcName}(${argsStr})`; // Return original if function not found
-        });
-      };
-
-      // Process @variable syntax (shortcut for variables) - FIXED VERSION
-      processedContent = processedContent.replace(/@([a-zA-Z_$][a-zA-Z0-9_$]*(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)*)/g, (_, varPath) => {
-        // Don't process if it's part of a helper function call
-        if (processedContent.indexOf(`@${varPath}(`) > -1) {
-          return `@${varPath}`;
-        }
-
-        // Handle dot notation for object properties
-        const parts = varPath.split('.');
-        let value = contextData;
-
-        for (const part of parts) {
-          if (value === null || value === undefined) break;
-          value = value[part];
-        }
-
-        if (value === undefined) {
-          // Check if it's a helper function without parentheses
-          if (this.viewHelpers[varPath]) {
-            return `@${varPath}`; // Return original for helper functions without ()
-          }
-          return `@${varPath}`; // Return original if not found
-        }
-
-        if (typeof value === 'object') return JSON.stringify(value);
-        return value;
-      });
-
-      // Process function calls in the main content
-      processedContent = processFunctionCalls(processedContent, contextData);
-
-      const processConditionals = (template, context) => {
-        return template
-          .replace(
-            /@if\s*\((.+?)\)\s*([\s\S]+?)((?:@elif\s*\(.+?\)\s*[\s\S]+?)*)@else\s*([\s\S]+?)@end/g,
-            (match, ifCond, ifBlock, elifBlocks, elseBlock) => {
-              if (evaluate(ifCond, context)) return processConditionals(ifBlock, context);
-
-              const elifMatches = [
-                ...elifBlocks.matchAll(
-                  /@elif\s*\((.+?)\)\s*([\s\S]+?)(?=(@elif|@else|@end))/g
-                )
-              ];
-              for (const [, cond, block] of elifMatches) {
-                if (evaluate(cond, context)) return processConditionals(block, context);
-              }
-
-              return processConditionals(elseBlock, context);
-            }
-          )
-          .replace(/@if\s*\((.+?)\)\s*([\s\S]+?)@end/g, (_, condition, block) => {
-            return evaluate(condition, context) ? processConditionals(block, context) : '';
-          });
-      };
-
-      // Process @each loops with multiple syntaxes
-      processedContent = processedContent.replace(
-        /@each\s*\(([^)]+)\)\s*([\s\S]+?)@end/g,
-        (_, loopExpr, innerTemplate) => {
-          let arrayExpr, itemVar, indexVar;
-
-          // Parse different @each syntaxes
-          if (loopExpr.includes(' in ')) {
-            // Syntax: @each(item in items) or @each(item, index in items)
-            const loopMatch = loopExpr.match(/^\s*([^,\s]+)(?:\s*,\s*([^,\s]+))?\s+in\s+(.+)\s*$/);
-            if (!loopMatch) return '';
-
-            itemVar = loopMatch[1];
-            indexVar = loopMatch[2] || 'index';
-            arrayExpr = loopMatch[3];
-          } else {
-            // Syntax: @each(items) - use default variable names
-            arrayExpr = loopExpr.trim();
-            itemVar = 'item';
-            indexVar = 'index';
-          }
-
-          const array = evaluate(arrayExpr, contextData);
-          if (!Array.isArray(array) && typeof array !== 'object') return '';
-
-          if (typeof array === 'object' && !Array.isArray(array)) {
-            return Object.entries(array)
-              .map(([key, value], idx) => {
-                const loopContext = {
-                  ...contextData,
-                  ...this.viewHelpers,
-                  [itemVar]: value,
-                  [indexVar]: idx,
-                  key: key,
-                  value: value,
-                  this: value,
-                  isFirst: idx === 0,
-                  isLast: idx === Object.keys(array).length - 1
-                };
-
-                let processed = processConditionals(innerTemplate, loopContext);
-                processed = processed.replace(/@\{([^}]+)\}/g, (_, expr) => {
-                  const result = evaluate(expr, loopContext);
-                  if (result === undefined) return '';
-                  if (typeof result === 'object') return JSON.stringify(result);
-                  return result;
-                });
-                // Process function calls inside loops
-                processed = processFunctionCalls(processed, loopContext);
-                // Also process @variable syntax inside loops
-                processed = processed.replace(/@([a-zA-Z_$][a-zA-Z0-9_$]*(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)*)/g, (_, varPath) => {
-                  const parts = varPath.split('.');
-                  let value = loopContext;
-
-                  for (const part of parts) {
-                    if (value === null || value === undefined) break;
-                    value = value[part];
-                  }
-
-                  if (value === undefined) return `@${varPath}`;
-                  if (typeof value === 'object') return JSON.stringify(value);
-                  return value;
-                });
-
-                return processed;
-              })
-              .join('');
-          }
-
-          return array
-            .map((item, idx) => {
-              const loopContext = {
-                ...contextData,
-                ...this.viewHelpers,
-                [itemVar]: item,
-                [indexVar]: idx,
-                this: item,
-                isFirst: idx === 0,
-                isLast: idx === array.length - 1
-              };
-
-              let processed = processConditionals(innerTemplate, loopContext);
-              processed = processed.replace(/@\{([^}]+)\}/g, (_, expr) => {
-                if (expr.startsWith('this[') && expr.endsWith(']')) {
-                  const indexExpr = expr.substring(5, expr.length - 1);
-                  const index = evaluate(indexExpr, loopContext);
-                  if (typeof index === 'number' && array[index] !== undefined) {
-                    return array[index];
-                  }
-                  return '';
-                }
-
-                const result = evaluate(expr, loopContext);
-                if (result === undefined) return '';
-                if (typeof result === 'object') return JSON.stringify(result);
-                return result;
-              });
-              // Process function calls inside loops
-              processed = processFunctionCalls(processed, loopContext);
-              // Also process @variable syntax inside loops
-              processed = processed.replace(/@([a-zA-Z_$][a-zA-Z0-9_$]*(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)*)/g, (_, varPath) => {
-                const parts = varPath.split('.');
-                let value = loopContext;
-
-                for (const part of parts) {
-                  if (value === null || value === undefined) break;
-                  value = value[part];
-                }
-
-                if (value === undefined) return `@${varPath}`;
-                if (typeof value === 'object') return JSON.stringify(value);
-                return value;
-              });
-
-              return processed;
-            })
-            .join('');
-        }
-      );
-
-      processedContent = processConditionals(processedContent, {
-        ...contextData,
-        ...this.viewHelpers
-      });
-
-      // Process inline expressions @{...}
-      processedContent = processedContent.replace(/@\{([^}]+)\}/g, (_, expr) => {
-        if (expr.startsWith('this[') && expr.endsWith(']')) {
-          const indexExpr = expr.substring(5, expr.length - 1);
-          const idx = evaluate(indexExpr, contextData);
-          if (Array.isArray(contextData) && typeof idx === 'number' && contextData[idx] !== undefined) {
-            return contextData[idx];
-          }
-          return '';
-        }
-
-        const result = evaluate(expr, {
-          ...contextData,
-          ...this.viewHelpers
-        });
-        if (result === undefined) return '';
-        if (typeof result === 'object') return JSON.stringify(result);
-        return result;
-      });
-
-      // Process @variable syntax one more time for any remaining variables
-      processedContent = processedContent.replace(/@([a-zA-Z_$][a-zA-Z0-9_$]*(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)*)/g, (_, varPath) => {
-        // Skip if this looks like it was part of a function call that was already processed
-        if (processedContent.indexOf(`@${varPath}(`) > -1) {
-          return `@${varPath}`;
-        }
-
-        const parts = varPath.split('.');
-        let value = contextData;
-
-        for (const part of parts) {
-          if (value === null || value === undefined) break;
-          value = value[part];
-        }
-
-        if (value === undefined) {
-          // Check if it's a helper function without parentheses
-          if (this.viewHelpers[varPath]) {
-            return `@${varPath}`; // Return original for helper functions without ()
-          }
-          return `@${varPath}`; // Return original if not found
-        }
-
-        if (typeof value === 'object') return JSON.stringify(value);
-        return value;
-      });
-
-      return processedContent;
-    };
-
-    const renderWithIncludes = async () => {
-      try {
-        // Process includes first
-        content = await processIncludes(content, data);
-
-        // Process the rest of the template
-        const finalContent = await this._processTemplateContent(content, data);
-        resolve(finalContent);
-      } catch (error) {
-        reject(error);
-      }
-    };
-
-    renderWithIncludes();
   }
 
   _renderThirdParty(file, data, resolve, reject) {
