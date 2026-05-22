@@ -50,7 +50,7 @@ class novax {
           this.minifyContent(data)
         }
         if (!res.headersSent) {
-          res.writeHead(200, { "Content-Type": "application/json" });
+          res.writeHead(res.statusCode || 200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(data));
         }
       };
@@ -60,11 +60,11 @@ class novax {
           data = contentType === 'application/javascript' ? this.minifyJs(content) : contentType === 'text/css' ? this.minifyCSS(content) : this.minifyContent(content)
         }
         if (!res.headersSent) {
-          res.writeHead(200, { "Content-Type": contentType || "text/html" });
+          res.writeHead(res.statusCode || 200, { "Content-Type": contentType || "text/html" });
           res.end(data);
         }
       };
-
+      
       res.set = (headers) => {
         for (const key in headers) {
           res.setHeader(key, headers[key]);
@@ -577,7 +577,7 @@ _registerRouterObject(routerObject) {
           data = contentType === 'application/javascript' ? this.minifyJs(data) : contentType === 'text/css' ? this.minifyCSS(data) : this.minifyContent(data)
         }
 
-        res.writeHead(200, { "Content-Type": contentType });
+        res.writeHead(res.statusCode || 200, { "Content-Type": contentType });
         res.end(data);
       });
     });
@@ -685,7 +685,7 @@ _registerRouterObject(routerObject) {
         if(this.minifier) {
           fileContent = contentType === 'application/javascript' ? this.minifyJs(fileContent) : contentType === 'text/css' ? this.minifyCSS(fileContent) : this.minifyContent(fileContent);
         }
-        response.writeHead(200, { 'Content-Type': type });
+        response.writeHead(res.statusCode || 200, { 'Content-Type': type });
         return response.end(fileContent);
     } catch (err) {
         response.writeHead(500, { 'Content-Type': 'text/html' });

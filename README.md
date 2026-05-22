@@ -1,4 +1,4 @@
-# NovaxJS - Modern Web Framework for Node.js (v9.4.2)
+# NovaxJS - Modern Web Framework for Node.js (v9.4.3)
 
 ![NovaxJS Logo](https://www.novaxjs2.site/logo.png)
 
@@ -30,6 +30,41 @@ NovaxJS is a lightweight, high-performance web framework for Node.js designed fo
 - **HTML Minifier** - Minification for HTML, CSS, and JavaScript output (enabled by default)
 - **View Helpers** - Register custom helpers for templates
 - **Router Modularization** - Use external router modules with `useRouter()` method
+- 
+## 🔄 What's New in v9.4.3
+
+### 🐛 Bug Fixes
+- **Fixed `res.status()` method**: Status codes now properly apply to responses instead of always defaulting to 200
+- Improved response header handling for status codes
+
+### 📝 Correct Usage Example
+
+```javascript
+// Chain with json
+app.get('/created', (req, res) => {
+  res.status(201).json({ message: 'Resource created' });
+});
+
+// Chain with send
+app.get('/not-found', (req, res) => {
+  res.status(404).send('<h1>Page Not Found</h1>');
+});
+
+// Set status separately
+app.get('/unauthorized', (req, res) => {
+  res.status(401);
+  res.json({ error: 'Unauthorized access' });
+});
+
+// Status code examples
+res.status(200).json({ data: users });  // OK
+res.status(201).send('Created');         // Created
+res.status(204).send();                  // No Content
+res.status(400).json({ error: 'Bad request' });
+res.status(401).send('Unauthorized');
+res.status(404).send('Not found');
+res.status(500).send('Server error');
+```
 
 ## 🔄 What's New in v9.4.2
 
@@ -1443,4 +1478,4 @@ ISC License
 
 ---
 
-This documentation covers all features and capabilities of NovaxJS v9.4.2, including both existing functionality and new enhancements. For more examples and advanced usage patterns, please refer to the official documentation website.
+This documentation covers all features and capabilities of NovaxJS v9.4.3, including both existing functionality and new enhancements. For more examples and advanced usage patterns, please refer to the official documentation website.
