@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { createRequire } = require("module");
 
 class NovaxTemplating {
   constructor(app) {
@@ -146,14 +147,14 @@ class NovaxTemplating {
       if (err) return reject(err);
 
       if (isJsTemplate) {
-        this._renderJsTemplate(content, data, resolve, reject);
+        this._renderJsTemplate(content, data, resolve, reject, filePath);
       } else {
         this._renderHtmlTemplate(content, data, resolve, reject);
       }
     });
   }
 
-  _renderJsTemplate(content, data, resolve, reject) {
+  _renderJsTemplate(content, data, resolve, reject, filePath) {
     try {
       const module = { exports: {} };
       const exports = module.exports;
@@ -162,6 +163,8 @@ class NovaxTemplating {
         ...this.viewHelpers,
         helpers: this.viewHelpers
       };
+
+      const scopedRequire = filePath ? createRequire(filePath) : require;
 
       const helperDeclarations = Object.keys(this.viewHelpers)
         .map(helper => `const ${helper} = helpers.${helper};`)
@@ -180,7 +183,7 @@ class NovaxTemplating {
         `
       );
 
-      const result = templateFn(module, exports, require, data, this.viewHelpers);
+      const result = templateFn(module, exports, scopedRequire, data, this.viewHelpers);
 
       if (typeof result === 'function') {
         try {

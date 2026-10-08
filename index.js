@@ -685,7 +685,7 @@ _registerRouterObject(routerObject) {
         if(this.minifier) {
           fileContent = contentType === 'application/javascript' ? this.minifyJs(fileContent) : contentType === 'text/css' ? this.minifyCSS(fileContent) : this.minifyContent(fileContent);
         }
-        response.writeHead(res.statusCode || 200, { 'Content-Type': type });
+        response.writeHead(response.statusCode || 200, { 'Content-Type': type });
         return response.end(fileContent);
     } catch (err) {
         response.writeHead(500, { 'Content-Type': 'text/html' });
